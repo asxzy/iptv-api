@@ -5,6 +5,7 @@ import gzip
 import os
 import pickle
 import sys
+from threading import Lock
 from time import time
 from typing import Callable, Optional, Any
 
@@ -16,8 +17,10 @@ import utils.frozen as frozen
 from updates.epg import get_epg
 from updates.epg.tools import write_to_xml, compress_to_gz
 from updates.subscribe import get_channels_by_subscribe_urls
+from updates.subscribe.request import filter_channel_data_nested_blacklist
 from utils.aggregator import ResultAggregator
-from utils.channel import get_channel_items, append_total_data, test_speed
+from utils.channel import get_channel_items, append_total_data, test_speed, retain_origin
+from utils.requests.tools import get_soup_requests
 from utils.config import config
 from utils.i18n import t
 from utils.speed import clear_cache
@@ -48,6 +51,8 @@ class UpdateSource:
     def __init__(self):
         self.whitelist_maps = None
         self.blacklist = None
+        self.nested_blacklist_cache = {}
+        self.nested_blacklist_lock = Lock()
 
         self.update_progress: Optional[ProgressCallback] = None
         self.run_ui = False
@@ -129,6 +134,39 @@ class UpdateSource:
         if config.open_history and os.path.exists(constants.frozen_path):
             frozen.load(constants.frozen_path)
 
+    def _filter_nested_blacklist(self):
+        """Apply the nested m3u/m3u8 blacklist to the fully-merged channel data, BEFORE
+        the speed test, so it covers all sources (subscribe, local, history). Reuses the
+        per-run cache populated during subscribe parsing to avoid re-fetching."""
+        if not self.blacklist:
+            return
+        timeout = config.request_timeout
+
+        def make_fetch(headers):
+            def _fetch_text(u):
+                try:
+                    resp = get_soup_requests(u, timeout=timeout, headers_override=headers)
+                except Exception:
+                    return ""
+                if not resp:
+                    return ""
+                if hasattr(resp, "text"):
+                    resp.encoding = "utf-8"
+                    return resp.text or ""
+                return str(resp) or ""
+            return _fetch_text
+
+        removed = filter_channel_data_nested_blacklist(
+            self.channel_data,
+            self.blacklist,
+            make_fetch,
+            retain_origin=retain_origin,
+            cache=self.nested_blacklist_cache,
+            cache_lock=self.nested_blacklist_lock,
+        )
+        if removed:
+            logger.info("Nested blacklist removed %d url(s) before speed test", removed)
+
     # ----------------------------
     # stage 2: fetch subscribe/epg (concurrent)
     # ----------------------------
@@ -165,6 +203,8 @@ class UpdateSource:
             names=channel_names,
             whitelist=whitelist_urls,
             blacklist=self.blacklist,
+            nested_blacklist_cache=self.nested_blacklist_cache,
+            nested_blacklist_lock=self.nested_blacklist_lock,
             callback=self.update_progress,
         )
 
@@ -326,6 +366,8 @@ class UpdateSource:
                 self.whitelist_maps,
                 self.blacklist,
             )
+
+            self._filter_nested_blacklist()
 
             cache = self._load_cache()
 

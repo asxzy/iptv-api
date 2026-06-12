@@ -142,11 +142,74 @@ def nested_url_blocked(url, blacklist, fetch_text, cache=None, cache_lock=None,
     return blocked
 
 
+def filter_channel_data_nested_blacklist(channel_data, blacklist, make_fetch, retain_origin=(),
+                                         cache=None, cache_lock=None, max_workers=10,
+                                         progress=None) -> int:
+    """Prune `channel_data` IN PLACE, removing every ChannelData whose url is
+    nested-blacklisted (per nested_url_blocked). Covers all sources uniformly.
+
+    - make_fetch: callable(headers) -> (callable(url) -> str). Builds the fetcher for a url's headers.
+    - retain_origin: origins exempt from the blacklist (e.g. whitelist/hls).
+    - cache / cache_lock: optional shared per-run verdict cache (so urls already checked
+      elsewhere are not re-fetched).
+    - progress: optional callable invoked once per checked url (for a progress bar).
+    Returns the number of ChannelData entries removed.
+    """
+    if not blacklist:
+        return 0
+    # Collect unique candidate urls (skip exempt origins); keep one representative headers per url.
+    candidates = {}
+    for names in channel_data.values():
+        for info_list in names.values():
+            for info in info_list:
+                if info.get("origin") in retain_origin:
+                    continue
+                url = info.get("url")
+                if url and url not in candidates:
+                    candidates[url] = info.get("headers")
+    if not candidates:
+        return 0
+    if cache is None:
+        cache = {}
+    if cache_lock is None:
+        cache_lock = Lock()
+    blocked = set()
+    blocked_lock = Lock()
+
+    def _check(item):
+        url, headers = item
+        try:
+            if nested_url_blocked(url, blacklist, make_fetch(headers),
+                                  cache=cache, cache_lock=cache_lock):
+                with blocked_lock:
+                    blocked.add(url)
+        except Exception:
+            pass
+        finally:
+            if progress:
+                progress()
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        list(executor.map(_check, list(candidates.items())))
+
+    if not blocked:
+        return 0
+    removed = 0
+    for names in channel_data.values():
+        for name, info_list in list(names.items()):
+            kept = [info for info in info_list if info.get("url") not in blocked]
+            removed += len(info_list) - len(kept)
+            names[name] = kept
+    return removed
+
+
 async def get_channels_by_subscribe_urls(
         urls,
         names=None,
         whitelist=None,
         blacklist=None,
+        nested_blacklist_cache=None,
+        nested_blacklist_lock=None,
         callback=None,
 ):
     """
@@ -200,8 +263,10 @@ async def get_channels_by_subscribe_urls(
     open_auto_disable_source = config.open_auto_disable_source
     disabled_urls = set()
     disabled_lock = Lock()
-    nested_blacklist_cache = {}
-    nested_blacklist_lock = Lock()
+    if nested_blacklist_cache is None:
+        nested_blacklist_cache = {}
+    if nested_blacklist_lock is None:
+        nested_blacklist_lock = Lock()
 
     def _mark_disabled(source_url: str, reason: str):
         if not open_auto_disable_source or not source_url:

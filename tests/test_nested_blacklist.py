@@ -15,7 +15,7 @@ if _REPO_ROOT not in sys.path:
 
 from collections import defaultdict
 
-from updates.subscribe.request import nested_url_blocked, NESTED_M3U_MAX_DEPTH
+from updates.subscribe.request import nested_url_blocked, NESTED_M3U_MAX_DEPTH, filter_channel_data_nested_blacklist
 
 
 # ---------------------------------------------------------------------------
@@ -305,6 +305,105 @@ def test_14_blacklist_noop():
 
 
 # ---------------------------------------------------------------------------
+# filter_channel_data_nested_blacklist tests
+# ---------------------------------------------------------------------------
+
+def _make_channel_data(*entries):
+    """Build a channel_data dict from a list of (category, name, url, origin, headers) tuples."""
+    result = {}
+    for category, name, url, origin, headers in entries:
+        result.setdefault(category, {}).setdefault(name, []).append(
+            {"url": url, "origin": origin, "headers": headers}
+        )
+    return result
+
+
+def test_F1_blacklisted_removed_clean_kept():
+    """One url whose nested m3u8 contains a blacklisted child is removed;
+    a clean leaf url is kept. Return value == number of removed entries."""
+    blacklisted_url = "http://agg.example.com/list.m3u8"
+    clean_url = "http://cdn.example.com/clean.ts"
+    # The blacklisted m3u8 lists a bad child
+    bad_content = make_m3u("http://bad.example.com/stream.ts")
+    fake = FakeFetch({blacklisted_url: bad_content})
+    make_fetch = lambda headers: fake  # noqa: E731
+
+    channel_data = _make_channel_data(
+        ("Cat1", "Chan1", blacklisted_url, "subscribe", None),
+        ("Cat1", "Chan2", clean_url, "subscribe", None),
+    )
+    removed = filter_channel_data_nested_blacklist(channel_data, BLACKLIST, make_fetch)
+    assert removed == 1, f"Expected 1 removed, got {removed}"
+    assert channel_data["Cat1"]["Chan1"] == [], "Blacklisted entry must be removed"
+    assert len(channel_data["Cat1"]["Chan2"]) == 1, "Clean entry must be kept"
+
+
+def test_F2_retain_origin_exempt():
+    """An entry with origin in retain_origin is NOT removed even if its url would be blocked,
+    and the fake is NOT fetched for it."""
+    blacklisted_url = "http://agg.example.com/list.m3u8"
+    bad_content = make_m3u("http://bad.example.com/stream.ts")
+    fake = FakeFetch({blacklisted_url: bad_content})
+    make_fetch = lambda headers: fake  # noqa: E731
+
+    # origin="whitelist" is in retain_origin
+    channel_data = _make_channel_data(
+        ("Cat1", "Chan1", blacklisted_url, "whitelist", None),
+    )
+    removed = filter_channel_data_nested_blacklist(
+        channel_data, BLACKLIST, make_fetch, retain_origin=("whitelist", "hls")
+    )
+    assert removed == 0, "Exempt origin must not be removed"
+    assert len(channel_data["Cat1"]["Chan1"]) == 1, "Exempt entry must remain"
+    assert fake.total_calls() == 0, "Fetcher must NOT be called for exempt origins"
+
+
+def test_F3_empty_blacklist_noop():
+    """blacklist=None or blacklist=[] returns 0 immediately; nothing fetched; channel_data unchanged."""
+    url = "http://agg.example.com/list.m3u8"
+    bad_content = make_m3u("http://bad.example.com/stream.ts")
+    fake = FakeFetch({url: bad_content})
+    make_fetch = lambda headers: fake  # noqa: E731
+
+    channel_data = _make_channel_data(("Cat1", "Chan1", url, "subscribe", None))
+    original_len = len(channel_data["Cat1"]["Chan1"])
+
+    r1 = filter_channel_data_nested_blacklist(channel_data, None, make_fetch)
+    assert r1 == 0, "None blacklist must return 0"
+    assert len(channel_data["Cat1"]["Chan1"]) == original_len, "channel_data must be unchanged"
+    assert fake.total_calls() == 0, "None blacklist must not fetch"
+
+    r2 = filter_channel_data_nested_blacklist(channel_data, [], make_fetch)
+    assert r2 == 0, "Empty blacklist must return 0"
+    assert fake.total_calls() == 0, "Empty blacklist must not fetch"
+
+
+def test_F4_real_world_nosignal_repro():
+    """Real-world repro: freetv master m3u8 pointing to nosignal_h264 variant.
+    Blacklist=['nosignal'], origin='subscribe' → entry removed."""
+    master_url = (
+        "https://stream1.freetv.fun/"
+        "df7cf71b3e02015b9029ac087b3eec56fde92fd81d162962570629faec293037.m3u8"
+    )
+    master_content = (
+        "#EXTM3U\n"
+        "#EXT-X-STREAM-INF:BANDWIDTH=4000000,RESOLUTION=1920x1080\n"
+        "http://files4.3y1.xyz/media/video/nosignal_h264/playlist.m3u8\n"
+    )
+    fake = FakeFetch({master_url: master_content})
+    make_fetch = lambda headers: fake  # noqa: E731
+
+    channel_data = _make_channel_data(
+        ("Sports", "SomeChannel", master_url, "subscribe", None),
+    )
+    removed = filter_channel_data_nested_blacklist(
+        channel_data, ["nosignal"], make_fetch, retain_origin=("whitelist", "hls")
+    )
+    assert removed == 1, f"Expected 1 removed, got {removed}"
+    assert channel_data["Sports"]["SomeChannel"] == [], "nosignal master must be removed"
+
+
+# ---------------------------------------------------------------------------
 # pytest-compatible test discovery  (functions prefixed with test_)
 # plus a standalone runner for direct python execution
 # ---------------------------------------------------------------------------
@@ -326,6 +425,10 @@ _ALL_TESTS = [
     test_12_hls_marker_inside_url_fragment,
     test_13_txt_nested_aggregation,
     test_14_blacklist_noop,
+    test_F1_blacklisted_removed_clean_kept,
+    test_F2_retain_origin_exempt,
+    test_F3_empty_blacklist_noop,
+    test_F4_real_world_nosignal_repro,
 ]
 
 if __name__ == "__main__":
