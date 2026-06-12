@@ -28,17 +28,23 @@ from utils.tools import (
     check_url_by_keywords,
 )
 
-_PLAYLIST_EXTENSIONS = (".m3u", ".m3u8", ".txt")
+# Obvious terminal media / segment / asset files: a leaf we never fetch (no redirect or
+# playlist nesting worth checking, and we must not download media bodies).
+_TERMINAL_MEDIA_EXTENSIONS = (
+    ".ts", ".flv", ".mp4", ".mkv", ".mov", ".avi", ".m4s", ".webm",
+    ".aac", ".m4a", ".mp3", ".ac3", ".ogg", ".wav",
+    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".ico",
+)
 
 logger = get_logger(constants.log_path)
 
 
-def _looks_like_playlist_url(url: str) -> bool:
+def _is_terminal_media_url(url: str) -> bool:
     try:
         path = urlsplit(url).path.lower()
     except Exception:
         return False
-    return path.endswith(_PLAYLIST_EXTENSIONS)
+    return path.endswith(_TERMINAL_MEDIA_EXTENSIONS)
 
 
 def _parse_aggregation_children(content: str, base_url: str = "") -> list:
@@ -98,16 +104,21 @@ def _parse_aggregation_children(content: str, base_url: str = "") -> list:
     return children
 
 
-def nested_url_blocked(url, blacklist, fetch_text, cache=None, cache_lock=None,
+def nested_url_blocked(url, blacklist, fetch, cache=None, cache_lock=None,
                        depth=0, _in_progress=None) -> bool:
-    """All-or-nothing recursive blacklist check.
+    """All-or-nothing recursive, redirect-aware blacklist check.
 
-    Recursion is NOT depth-limited: it keeps following nested links as long as the
-    url is itself a playlist (.m3u/.m3u8/.txt), and stops once the url is not a
-    playlist (a real media/leaf) or the fetch yields nothing. The cycle guard
-    (`_in_progress`) guarantees termination on self-referential playlists.
+    For each url (unless it is an obvious terminal media file) `fetch` resolves
+    redirects and returns (chain, content):
+      - every url in the redirect chain is blacklist-checked, so a server that 302s a
+        dead channel to a fixed placeholder (e.g. .../backup.m3u8) is caught by the
+        TARGET url instead of being silently followed;
+      - the final playlist content is parsed and its nested links are recursed.
 
-    - fetch_text: callable(url)->str, returns content or "" on failure.
+    Recursion is NOT depth-limited; it follows nested m3u/m3u8 links until a terminal
+    media/leaf url. The cycle guard (`_in_progress`) guarantees termination.
+
+    - fetch: callable(url) -> (chain: list[str], content: str); ([], "") on failure.
     - cache: optional dict[str,bool] shared across calls (thread-safe via cache_lock).
     - depth: tracked only to gate caching (deeper verdicts may be cycle-truncated).
     """
@@ -115,7 +126,7 @@ def nested_url_blocked(url, blacklist, fetch_text, cache=None, cache_lock=None,
         return False
     if check_url_by_keywords(url, blacklist):
         return True
-    if not _looks_like_playlist_url(url):
+    if _is_terminal_media_url(url):
         return False
     if cache is not None:
         if cache_lock is not None:
@@ -131,12 +142,20 @@ def nested_url_blocked(url, blacklist, fetch_text, cache=None, cache_lock=None,
     _in_progress.add(url)
     blocked = False
     try:
-        children = _parse_aggregation_children(fetch_text(url), base_url=url)
-        for child in children:
-            if nested_url_blocked(child, blacklist, fetch_text, cache, cache_lock,
-                                  depth + 1, _in_progress):
+        chain, content = fetch(url)
+        # 1) Blacklist-check every redirect target (don't silently follow to a placeholder).
+        for target in chain:
+            if target and target != url and check_url_by_keywords(target, blacklist):
                 blocked = True
                 break
+        # 2) Recurse into the nested links of the final (resolved) playlist content.
+        if not blocked and content:
+            base = chain[-1] if chain else url
+            for child in _parse_aggregation_children(content, base_url=base):
+                if nested_url_blocked(child, blacklist, fetch, cache, cache_lock,
+                                      depth + 1, _in_progress):
+                    blocked = True
+                    break
     finally:
         _in_progress.discard(url)
     # Only cache top-level (complete) verdicts; deeper verdicts may be cycle-truncated and context-dependent.

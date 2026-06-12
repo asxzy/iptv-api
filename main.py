@@ -20,7 +20,7 @@ from updates.subscribe import get_channels_by_subscribe_urls
 from updates.subscribe.request import filter_channel_data_nested_blacklist
 from utils.aggregator import ResultAggregator
 from utils.channel import get_channel_items, append_total_data, test_speed, retain_origin
-from utils.requests.tools import get_soup_requests
+from utils.requests.tools import get_redirect_chain_content
 from utils.config import config
 from utils.i18n import t
 from utils.speed import clear_cache
@@ -147,18 +147,9 @@ class UpdateSource:
         logger.info("Applying nested blacklist before speed test (%d keyword(s))...", len(self.blacklist))
 
         def make_fetch(headers):
-            def _fetch_text(u):
-                try:
-                    resp = get_soup_requests(u, timeout=timeout, headers_override=headers)
-                except Exception:
-                    return ""
-                if not resp:
-                    return ""
-                if hasattr(resp, "text"):
-                    resp.encoding = "utf-8"
-                    return resp.text or ""
-                return str(resp) or ""
-            return _fetch_text
+            def _fetch(u):
+                return get_redirect_chain_content(u, timeout=timeout, headers_override=headers)
+            return _fetch
 
         removed = filter_channel_data_nested_blacklist(
             self.channel_data,

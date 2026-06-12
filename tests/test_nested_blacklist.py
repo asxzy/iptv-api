@@ -23,15 +23,34 @@ from updates.subscribe.request import nested_url_blocked, filter_channel_data_ne
 # ---------------------------------------------------------------------------
 
 class FakeFetch:
-    """Dict-backed fake fetcher. Missing keys return "". Counts calls per url."""
+    """Redirect-aware fake fetcher matching the real fetch contract.
 
-    def __init__(self, mapping=None):
-        self._mapping = mapping or {}
+    __call__(url) -> (chain, content):
+      - chain: [url, *redirect targets] following the `redirects` map (single hop each,
+        chained, cycle-safe).
+      - content: `content_map` entry for the FINAL url after redirects (else "").
+    First positional arg is the content map, so existing FakeFetch({url: content}) keeps
+    working. Counts calls per requested url.
+    """
+
+    def __init__(self, content_map=None, redirects=None):
+        self._content = content_map or {}
+        self._redirects = redirects or {}
         self.call_counts = defaultdict(int)
 
     def __call__(self, url):
         self.call_counts[url] += 1
-        return self._mapping.get(url, "")
+        chain = [url]
+        cur = url
+        seen = {url}
+        while cur in self._redirects:
+            nxt = self._redirects[cur]
+            chain.append(nxt)
+            if nxt in seen:
+                break
+            seen.add(nxt)
+            cur = nxt
+        return chain, self._content.get(cur, "")
 
     def total_calls(self):
         return sum(self.call_counts.values())
@@ -398,6 +417,49 @@ def test_F4_real_world_nosignal_repro():
     assert channel_data["Sports"]["SomeChannel"] == [], "nosignal master must be removed"
 
 
+def test_R1_redirect_target_blacklisted():
+    """A non-playlist url that 302-redirects to a blacklisted placeholder is caught by
+    the redirect TARGET url, not silently followed. (catvod live.php -> backup.m3u8)"""
+    live = "https://iptv.catvod.com/live.php?id=CCTV1&line=14"
+    backup = "https://www.catvod.com/backup.m3u8"
+    fake = FakeFetch(redirects={live: backup})
+    result = nested_url_blocked(live, ["backup"], fake)
+    assert result is True, "Expected True: redirect target contains blacklisted 'backup'"
+
+
+def test_R2_redirect_to_clean_playlist_content_checked():
+    """A redirect to a clean-named playlist is followed, and that playlist's nested
+    content is still blacklist-checked."""
+    live = "https://host.example.com/live.php?id=1"
+    real = "https://cdn.example.com/real.m3u8"
+    fake = FakeFetch(
+        content_map={real: make_m3u("https://bad.example.com/x.ts")},
+        redirects={live: real},
+    )
+    assert nested_url_blocked(live, BLACKLIST, fake) is True, \
+        "Expected True: resolved playlist content lists a blacklisted url"
+
+
+def test_R3_clean_redirect_not_blocked():
+    """A redirect to a fully clean playlist is not blocked (no over-blocking)."""
+    live = "https://host.example.com/live.php?id=2"
+    real = "https://cdn.example.com/clean.m3u8"
+    fake = FakeFetch(
+        content_map={real: make_m3u("https://cdn.example.com/clean.ts")},
+        redirects={live: real},
+    )
+    assert nested_url_blocked(live, BLACKLIST, fake) is False, \
+        "Expected False: clean redirect target and clean content"
+
+
+def test_R4_terminal_media_not_fetched():
+    """Obvious terminal media (.ts/.flv/...) is a leaf: never fetched, even though it
+    could in theory redirect. Keeps the pass cheap for direct media urls."""
+    fake = FakeFetch(redirects={"http://host/seg.ts": "http://bad.example/backup.m3u8"})
+    assert nested_url_blocked("http://host/seg.ts", BLACKLIST, fake) is False
+    assert fake.total_calls() == 0, "terminal media must not be fetched"
+
+
 # ---------------------------------------------------------------------------
 # pytest-compatible test discovery  (functions prefixed with test_)
 # plus a standalone runner for direct python execution
@@ -424,6 +486,10 @@ _ALL_TESTS = [
     test_F2_retain_origin_exempt,
     test_F3_empty_blacklist_noop,
     test_F4_real_world_nosignal_repro,
+    test_R1_redirect_target_blacklisted,
+    test_R2_redirect_to_clean_playlist_content_checked,
+    test_R3_clean_redirect_not_blocked,
+    test_R4_terminal_media_not_fetched,
 ]
 
 if __name__ == "__main__":
