@@ -184,8 +184,12 @@ def filter_channel_data_nested_blacklist(channel_data, blacklist, make_fetch, re
         cache_lock = Lock()
     blocked = set()
     blocked_lock = Lock()
+    total = len(candidates)
+    logger.info("Nested blacklist: checking %d candidate playlist url(s) with %d workers...",
+                total, max_workers)
+    start_ts = time()
     pbar = tqdm(
-        total=len(candidates),
+        total=total,
         desc=t("pbar.blacklist"),
         file=sys.stdout,
         mininterval=1,
@@ -212,7 +216,9 @@ def filter_channel_data_nested_blacklist(channel_data, blacklist, make_fetch, re
         if pbar is not None:
             pbar.close()
 
+    elapsed = time() - start_ts
     if not blocked:
+        logger.info("Nested blacklist: 0 of %d url(s) blocked (%.1fs)", total, elapsed)
         return 0
     removed = 0
     for names in channel_data.values():
@@ -220,6 +226,8 @@ def filter_channel_data_nested_blacklist(channel_data, blacklist, make_fetch, re
             kept = [info for info in info_list if info.get("url") not in blocked]
             removed += len(info_list) - len(kept)
             names[name] = kept
+    logger.info("Nested blacklist: blocked %d url(s), removed %d entr(ies) of %d candidate(s) (%.1fs)",
+                len(blocked), removed, total, elapsed)
     return removed
 
 

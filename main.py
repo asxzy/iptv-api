@@ -140,7 +140,10 @@ class UpdateSource:
         per-run cache populated during subscribe parsing to avoid re-fetching."""
         if not self.blacklist:
             return
-        timeout = config.request_timeout
+        # A small playlist that won't return within a few seconds is a dead/slow host;
+        # treat it as not-blocked (kept) and let the speed test drop it. Keeps this
+        # pre-probe pass snappy instead of stalling on the full request_timeout per url.
+        timeout = min(config.request_timeout, 5)
         logger.info("Applying nested blacklist before speed test (%d keyword(s))...", len(self.blacklist))
 
         def make_fetch(headers):
@@ -357,6 +360,8 @@ class UpdateSource:
             self.tasks = []
             self._write_epg_files_if_needed()
 
+            logger.info("Merging channel sources (subscribe / local / history)...")
+            _merge_start = time()
             append_total_data(
                 self.channel_items.items(),
                 self.channel_data,
@@ -364,6 +369,7 @@ class UpdateSource:
                 self.whitelist_maps,
                 self.blacklist,
             )
+            logger.info("Merged channel sources in %.1fs", time() - _merge_start)
 
             self._filter_nested_blacklist()
 
