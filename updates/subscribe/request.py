@@ -5,7 +5,9 @@ from logging import INFO
 from threading import Lock
 from time import time
 import sys
+from urllib.parse import urlsplit, urljoin
 
+import m3u8
 from tqdm.asyncio import tqdm_asyncio
 
 import utils.constants as constants
@@ -22,13 +24,129 @@ from utils.tools import (
     github_blob_to_raw,
     save_url_content, close_logger_handlers,
     disable_urls_in_file,
+    check_url_by_keywords,
 )
+
+NESTED_M3U_MAX_DEPTH = 3
+_PLAYLIST_EXTENSIONS = (".m3u", ".m3u8", ".txt")
+
+logger = get_logger(constants.log_path)
+
+
+def _looks_like_playlist_url(url: str) -> bool:
+    try:
+        path = urlsplit(url).path.lower()
+    except Exception:
+        return False
+    return path.endswith(_PLAYLIST_EXTENSIONS)
+
+
+def _parse_aggregation_children(content: str, base_url: str = "") -> list:
+    """Return the nested m3u/m3u8 links and station URLs contained in `content`,
+    resolving relative URIs against `base_url`.
+
+    Included (these are "links" we must blacklist-check / recurse into):
+    - HLS master-playlist variant streams (#EXT-X-STREAM-INF -> nested .m3u8 links).
+    - #EXTINF:-1 aggregation channels (the stations URL_B_i / URL_C_j).
+    - Plain "name,url" txt entries and bare URL-per-line lists.
+
+    Excluded:
+    - HLS media segments (.ts, positive #EXTINF duration). Per requirement, the media
+      source itself is never blacklist-checked here -- only the nested links are.
+    """
+    if not content:
+        return []
+    raw_children = []
+    if "#EXTM3U" in content:
+        parsed = None
+        try:
+            parsed = m3u8.loads(content)
+        except Exception:
+            parsed = None
+        if parsed is not None and (parsed.playlists or parsed.segments):
+            for playlist in parsed.playlists:
+                # Master-playlist variant streams: nested .m3u8 links.
+                if playlist.uri:
+                    raw_children.append(playlist.uri)
+            for segment in parsed.segments:
+                # duration < 0 (e.g. -1) marks a live channel/station, not a media segment;
+                # positive-duration segments are media (.ts) and are intentionally skipped.
+                if segment.uri and (segment.duration is None or segment.duration < 0):
+                    raw_children.append(segment.uri)
+        else:
+            # Aggregation lists with attributes (#EXTINF:-1 tvg-... ,Name) make m3u8 raise;
+            # fall back to the project's extended-m3u parser.
+            data = get_name_value(content, pattern=constants.multiline_m3u_pattern, open_headers=False)
+            raw_children = [(item.get("value") or "") for item in data]
+    else:
+        # Plain txt "name,url" list, or a bare URL-per-line list.
+        for raw_line in content.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            match = constants.multiline_txt_pattern.match(line)
+            raw_children.append(match.group("value") if match else line)
+    children = []
+    for child in raw_children:
+        child = (child or "").strip().partition("$")[0].strip()
+        if not child:
+            continue
+        if "://" not in child and base_url:
+            child = urljoin(base_url, child)
+        if "://" in child:
+            children.append(child)
+    return children
+
+
+def nested_url_blocked(url, blacklist, fetch_text, cache=None, cache_lock=None,
+                       depth=0, _in_progress=None) -> bool:
+    """All-or-nothing recursive blacklist check.
+    - fetch_text: callable(url)->str, returns content or "" on failure.
+    - cache: optional dict[str,bool] shared across calls (thread-safe via cache_lock).
+    """
+    if not blacklist or not url:
+        return False
+    if check_url_by_keywords(url, blacklist):
+        return True
+    if depth >= NESTED_M3U_MAX_DEPTH or not _looks_like_playlist_url(url):
+        return False
+    if cache is not None:
+        if cache_lock is not None:
+            with cache_lock:
+                if url in cache:
+                    return cache[url]
+        elif url in cache:
+            return cache[url]
+    if _in_progress is None:
+        _in_progress = set()
+    if url in _in_progress:  # cycle guard
+        return False
+    _in_progress.add(url)
+    blocked = False
+    try:
+        children = _parse_aggregation_children(fetch_text(url), base_url=url)
+        for child in children:
+            if nested_url_blocked(child, blacklist, fetch_text, cache, cache_lock,
+                                  depth + 1, _in_progress):
+                blocked = True
+                break
+    finally:
+        _in_progress.discard(url)
+    # Only cache top-level (complete) verdicts; deeper verdicts may be cycle-truncated and context-dependent.
+    if cache is not None and depth == 0:
+        if cache_lock is not None:
+            with cache_lock:
+                cache[url] = blocked
+        else:
+            cache[url] = blocked
+    return blocked
 
 
 async def get_channels_by_subscribe_urls(
         urls,
         names=None,
         whitelist=None,
+        blacklist=None,
         callback=None,
 ):
     """
@@ -82,13 +200,15 @@ async def get_channels_by_subscribe_urls(
     open_auto_disable_source = config.open_auto_disable_source
     disabled_urls = set()
     disabled_lock = Lock()
+    nested_blacklist_cache = {}
+    nested_blacklist_lock = Lock()
 
     def _mark_disabled(source_url: str, reason: str):
         if not open_auto_disable_source or not source_url:
             return
         with disabled_lock:
             disabled_urls.add(source_url)
-        print(t("msg.auto_disable_source").format(name=mode_name, url=source_url, reason=reason), flush=True)
+        logger.warning(t("msg.auto_disable_source").format(name=mode_name, url=source_url, reason=reason))
 
     def process_subscribe_channels(subscribe_info: str | dict) -> defaultdict:
         subscribe_url = subscribe_info.get('url') if isinstance(subscribe_info, dict) else subscribe_info
@@ -104,7 +224,7 @@ async def get_channels_by_subscribe_urls(
                 response = retry_func(lambda: get_soup_requests(subscribe_url, timeout=request_timeout,
                                                                 headers_override=headers), name=subscribe_url)
             except Exception as e:
-                print(e, flush=True)
+                logger.error("Subscribe request failed: %s", e)
                 disable_reason = t("msg.auto_disable_request_failed")
             if response:
                 if hasattr(response, 'text'):
@@ -129,6 +249,19 @@ async def get_channels_by_subscribe_urls(
                         ),
                         open_headers=open_headers if m3u_type else False
                     )
+
+                    def _fetch_text(u, _headers=headers):
+                        try:
+                            resp = get_soup_requests(u, timeout=request_timeout, headers_override=_headers)
+                        except Exception:
+                            return ""
+                        if not resp:
+                            return ""
+                        if hasattr(resp, "text"):
+                            resp.encoding = "utf-8"
+                            return resp.text or ""
+                        return str(resp) or ""
+
                     for item in data:
                         data_name = item.get("name", "").strip()
                         url = item.get("value", "").strip()
@@ -141,6 +274,10 @@ async def get_channels_by_subscribe_urls(
                             url_partition = url.partition("$")
                             url = url_partition[0]
                             info = url_partition[2]
+                            if blacklist and not in_whitelist and nested_url_blocked(
+                                    url, blacklist, _fetch_text,
+                                    cache=nested_blacklist_cache, cache_lock=nested_blacklist_lock):
+                                continue
                             value = {
                                 "url": url,
                                 "headers": item.get("headers", None),
@@ -156,7 +293,7 @@ async def get_channels_by_subscribe_urls(
                 if not channels and not disable_reason:
                     disable_reason = t("msg.auto_disable_no_match")
         except Exception as e:
-            print(t("msg.error_name_info").format(name=subscribe_url, info=e), flush=True)
+            logger.error(t("msg.error_name_info").format(name=subscribe_url, info=e))
             if not disable_reason:
                 disable_reason = t("msg.auto_disable_request_failed")
         finally:
@@ -188,7 +325,7 @@ async def get_channels_by_subscribe_urls(
             counts = disable_urls_in_file(constants.subscribe_path, disabled_urls)
             active_count = counts["active"]
             disabled_count = counts["disabled"]
-        print(t("msg.auto_disable_source_done").format(name=mode_name, active_count=active_count,
-                                                       disabled_count=disabled_count), flush=True)
+        logger.info(t("msg.auto_disable_source_done").format(name=mode_name, active_count=active_count,
+                                                              disabled_count=disabled_count))
         close_logger_handlers(logger)
         return subscribe_results

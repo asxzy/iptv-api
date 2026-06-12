@@ -1,4 +1,5 @@
 import configparser
+import logging
 import os
 import re
 import shutil
@@ -246,6 +247,11 @@ class ConfigManager:
         return self.config.getboolean("Settings", "open_headers", fallback=False)
 
     @property
+    def log_level(self):
+        level = self.config.get("Settings", "log_level", fallback="INFO").upper()
+        return getattr(logging, level, logging.INFO)
+
+    @property
     def open_epg(self):
         return self.config.getboolean("Settings", "open_epg", fallback=True)
 
@@ -456,7 +462,7 @@ class ConfigManager:
                         if not os.path.exists(dest_file_path):
                             shutil.copy(src_file_path, dest_file_path)
         except Exception as e:
-            print(f"Failed to copy files: {str(e)}")
+            logging.getLogger(__name__).error("Failed to copy files: %s", e)
 
 
 config = ConfigManager()

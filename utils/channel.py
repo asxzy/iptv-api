@@ -54,6 +54,8 @@ from utils.whitelist import is_url_whitelisted, get_whitelist_url, get_whitelist
 
 channel_alias = Alias()
 ip_checker = IPChecker()
+
+logger = get_logger(constants.log_path)
 location_list = config.location
 isp_list = config.isp
 open_filter_speed = config.open_filter_speed
@@ -307,11 +309,11 @@ def get_channel_items(whitelist_maps, blacklist) -> CategoryChannelData:
     blacklist_count = len(blacklist)
     channel_logo_count = count_files_by_ext(resource_path(constants.channel_logo_path), [config.logo_type])
     if whitelist_count:
-        print(t("msg.whitelist_found").format(count=whitelist_count))
+        logger.info(t("msg.whitelist_found").format(count=whitelist_count))
     if blacklist_count:
-        print(t("msg.blacklist_found").format(count=blacklist_count))
+        logger.info(t("msg.blacklist_found").format(count=blacklist_count))
     if channel_logo_count:
-        print(t("msg.channel_logo_found").format(count=channel_logo_count))
+        logger.info(t("msg.channel_logo_found").format(count=channel_logo_count))
 
     if os.path.exists(user_source_file):
         with open(user_source_file, "r", encoding="utf-8") as file:
@@ -365,7 +367,7 @@ def get_channel_items(whitelist_maps, blacklist) -> CategoryChannelData:
                         else:
                             unmatched_history[name].extend(info_list)
         except Exception as e:
-            print(t("msg.error_load_cache").format(info=e))
+            logger.warning(t("msg.error_load_cache").format(info=e))
 
         if unmatched_history and config.open_unmatch_category:
             unmatch_category = t("content.unmatch_channel")
@@ -566,7 +568,7 @@ def append_data_to_info_data(
             existing_map[url] = len(channel_list) - 1
 
         except Exception as e:
-            print(t("msg.error_append_channel_data").format(info=e))
+            logger.error(t("msg.error_append_channel_data").format(info=e))
             continue
 
 
@@ -586,7 +588,7 @@ def append_old_data_to_info_data(info_data, cate, name, data, whitelist_maps=Non
             )
         items_len = len(items)
         if items_len > 0:
-            print(f"{label}: {items_len}", end=", ")
+            logger.debug("%s: %s", label, items_len)
 
     whitelist_data = [item for item in data if item["origin"] == "whitelist"]
     append_and_print(whitelist_data, "whitelist", t("name.whitelist"))
@@ -609,12 +611,9 @@ def print_channel_number(data: CategoryChannelData, cate: str, name: str):
     Print channel number
     """
     channel_list = data.get(cate, {}).get(name, [])
-    print("IPv4:", len([channel for channel in channel_list if channel["ipv_type"] == "ipv4"]), end=", ")
-    print("IPv6:", len([channel for channel in channel_list if channel["ipv_type"] == "ipv6"]), end=", ")
-    print(
-        f"{t("name.total")}:",
-        len(channel_list),
-    )
+    ipv4_count = len([channel for channel in channel_list if channel["ipv_type"] == "ipv4"])
+    ipv6_count = len([channel for channel in channel_list if channel["ipv_type"] == "ipv6"])
+    logger.debug("Channel '%s': IPv4: %d, IPv6: %d, %s: %d", name, ipv4_count, ipv6_count, t("name.total"), len(channel_list))
 
 
 def append_total_data(
@@ -661,7 +660,7 @@ def append_total_data(
             continue
 
         for name, old_info_list in channel_obj.items():
-            print(f"{name}:", end=" ")
+            logger.debug("Processing channel: %s", name)
             if old_info_list:
                 append_old_data_to_info_data(data, cate, name, old_info_list, whitelist_maps=whitelist_maps,
                                              blacklist=blacklist,
@@ -674,7 +673,7 @@ def append_total_data(
                         blacklist=blacklist,
                         ipv_type_data=url_hosts_ipv_type
                     )
-                    print(f"{t(f"name.{method}")}:", len(name_results), end=", ")
+                    logger.debug("  %s: %d", t(f"name.{method}"), len(name_results))
             print_channel_number(data, cate, name)
 
     if config.open_unmatch_category and subscribe_result:
@@ -958,11 +957,9 @@ def generate_channel_statistic(logger, cate, name, values):
     if config.open_full_speed_test:
         content = f"{f"{t('name.category')}: {cate}, {t('name.name')}: {name}, {t('name.total')}: {total}, {t('name.valid')}: {valid}, {t('name.valid_percent')}: {valid_rate:.2f}%, IPv4: {ipv4_count}, IPv6: {ipv6_count}, {t('name.min_delay')}: {min_delay} ms, {t('name.max_speed')}: {max_speed:.2f} M/s, {t('name.average_speed')}: {avg_speed:.2f} M/s, {t('name.max_resolution')}: {max_resolution}, {t('name.avg_fps')}: {f"{avg_fps:.2f}" if avg_fps is not None else t('name.unknown')}, {t('name.video_codec')}: {most_video_str}, {t('name.audio_codec')}: {most_audio_str}"}"
         logger.info(content)
-        print(f"📊 {content}")
     else:
         content = f"{f"{t('name.category')}: {cate}, {t('name.name')}: {name}, {t('name.valid')}: {valid}, IPv4: {ipv4_count}, IPv6: {ipv6_count}, {t('name.min_delay')}: {min_delay} ms, {t('name.max_speed')}: {max_speed:.2f} M/s, {t('name.average_speed')}: {avg_speed:.2f} M/s, {t('name.max_resolution')}: {max_resolution}, {t('name.avg_fps')}: {f"{avg_fps:.2f}" if avg_fps is not None else t('name.unknown')}, {t('name.video_codec')}: {most_video_str}, {t('name.audio_codec')}: {most_audio_str}"}"
         logger.info(content)
-        print(f"📊 {content}")
 
 
 def process_write_content(
@@ -1059,7 +1056,7 @@ def process_write_content(
             ensure_result_data_schema(constants.rtmp_data_path)
             conn = get_db_connection(constants.rtmp_data_path)
         except Exception as e:
-            print(t("msg.write_error").format(info=f"open rtmp db error: {e}"))
+            logger.error(t("msg.write_error").format(info=f"open rtmp db error: {e}"))
         else:
             try:
                 cursor = conn.cursor()
@@ -1100,12 +1097,12 @@ def process_write_content(
             with open(path, "w", encoding="utf-8") as f:
                 f.write(content)
         except Exception as e:
-            print(t("msg.write_error").format(info=e), flush=True)
+            logger.error(t("msg.write_error").format(info=e))
             return
     try:
         convert_to_m3u(path, first_channel_name, data=result_data)
     except Exception as e:
-        print(t("msg.write_error").format(info=f"convert m3u error: {e}"), flush=True)
+        logger.error(t("msg.write_error").format(info=f"convert m3u error: {e}"))
 
 
 def write_channel_to_file(data, ipv6=False, first_channel_name=None, skip_print=False, is_last=False):
@@ -1114,7 +1111,7 @@ def write_channel_to_file(data, ipv6=False, first_channel_name=None, skip_print=
     """
     try:
         if not skip_print:
-            print(t("msg.writing_result"), flush=True)
+            logger.info(t("msg.writing_result"))
         open_empty_category = config.open_empty_category
         ipv_type_prefer = list(config.ipv_type_prefer)
         if any(pref == "auto" for pref in ipv_type_prefer):
@@ -1156,6 +1153,6 @@ def write_channel_to_file(data, ipv6=False, first_channel_name=None, skip_print=
                 is_last=is_last
             )
         if not skip_print:
-            print(t("msg.write_success"), flush=True)
+            logger.info(t("msg.write_success"))
     except Exception as e:
-        print(t("msg.write_error").format(info=e), flush=True)
+        logger.error(t("msg.write_error").format(info=e))

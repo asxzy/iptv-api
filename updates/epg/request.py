@@ -25,7 +25,10 @@ from utils.tools import (
     get_subscribe_entries,
     count_disabled_urls,
     disable_urls_in_file,
+    get_logger,
 )
+
+logger = get_logger(constants.log_path)
 
 
 def _normalize_epg_content(content, request_url=None, response=None):
@@ -51,12 +54,12 @@ def parse_epg(epg_content):
         parser = ET.XMLParser(encoding='UTF-8')
         root = ET.fromstring(epg_content, parser=parser)
     except ET.ParseError as e:
-        print(f"Error parsing XML: {e}")
+        logger.warning("Error parsing XML: %s", e)
         if isinstance(epg_content, (bytes, bytearray)):
             preview = bytes(epg_content[:500]).decode("utf-8", errors="replace")
         else:
             preview = epg_content[:500]
-        print(f"Problematic content: {preview}")
+        logger.debug("Problematic content: %s", preview)
         return {}, defaultdict(list)
 
     channels = {}
@@ -95,7 +98,7 @@ async def get_epg(names=None, callback=None):
     whitelist_entries, default_entries = get_subscribe_entries(constants.epg_path)
     entries = whitelist_entries + default_entries
     disabled_count = count_disabled_urls(constants.epg_path)
-    print(
+    logger.info(
         t("msg.epg_urls_whitelist_total").format(
             default_count=len(default_entries),
             whitelist_count=len(whitelist_entries),
@@ -143,7 +146,7 @@ async def get_epg(names=None, callback=None):
             return
         with disabled_lock:
             disabled_urls.add(source_url)
-        print(t("msg.auto_disable_source").format(name=t("name.epg"), url=source_url, reason=reason), flush=True)
+        logger.warning(t("msg.auto_disable_source").format(name=t("name.epg"), url=source_url, reason=reason))
 
     def process_run(entry):
         nonlocal all_result_verify, result
@@ -160,7 +163,7 @@ async def get_epg(names=None, callback=None):
                     name=request_url,
                 )
             except Exception as e:
-                print(e, flush=True)
+                logger.error("EPG request failed: %s", e)
                 disable_reason = t("msg.auto_disable_request_failed")
             if response:
                 content = _normalize_epg_content(response.content, request_url=request_url, response=response)
@@ -184,7 +187,7 @@ async def get_epg(names=None, callback=None):
             elif not disable_reason:
                 disable_reason = t("msg.auto_disable_request_failed")
         except Exception as e:
-            print(t("msg.error_name_info").format(name=request_url, info=e), flush=True)
+            logger.error(t("msg.error_name_info").format(name=request_url, info=e))
             if not disable_reason:
                 disable_reason = t("msg.auto_disable_request_failed")
         finally:
@@ -212,6 +215,6 @@ async def get_epg(names=None, callback=None):
         counts = disable_urls_in_file(constants.epg_path, disabled_urls)
         active_count = counts["active"]
         disabled_count = counts["disabled"]
-    print(t("msg.auto_disable_source_done").format(name=t("name.epg"), active_count=active_count,
-                                                   disabled_count=disabled_count), flush=True)
+    logger.info(t("msg.auto_disable_source_done").format(name=t("name.epg"), active_count=active_count,
+                                                         disabled_count=disabled_count))
     return result

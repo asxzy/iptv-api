@@ -30,10 +30,20 @@ opencc_t2s = OpenCC("t2s")
 _channel_alias_instance = None
 
 
-def get_logger(path, level=logging.ERROR, init=False):
+def get_logger(path, level=None, init=False):
     """
     get the logger
+
+    Controls console verbosity via config.log_level while keeping file logging
+    at the specified level. If level is None, file handler defaults to INFO.
+    Console handler always uses config.log_level for filtering.
     """
+    if level is None:
+        level = logging.INFO
+
+    console_level = config.log_level
+    effective_level = min(level, console_level)
+
     dir_name = os.path.dirname(path) or "."
     os.makedirs(dir_name, exist_ok=True)
     os.makedirs(constants.output_dir, exist_ok=True)
@@ -58,6 +68,7 @@ def get_logger(path, level=logging.ERROR, init=False):
                 pass
 
     handler = RotatingFileHandler(path, encoding="utf-8", delay=True)
+    handler.setLevel(level)
 
     abs_path = os.path.abspath(path)
     if not any(
@@ -70,13 +81,22 @@ def get_logger(path, level=logging.ERROR, init=False):
     if not has_stream:
         try:
             stream_handler = logging.StreamHandler(sys.stdout)
-            stream_handler.setLevel(level)
+            stream_handler.setLevel(console_level)
+            if console_level <= logging.INFO:
+                formatter = logging.Formatter(
+                    "%(asctime)s [%(levelname)s] %(message)s",
+                    datefmt="%H:%M:%S",
+                )
+                stream_handler.setFormatter(formatter)
             logger.addHandler(stream_handler)
         except Exception:
             pass
 
-    logger.setLevel(level)
+    logger.setLevel(effective_level)
     return logger
+
+
+_tools_logger = get_logger(constants.log_path)
 
 
 def format_interval(t):
@@ -115,7 +135,7 @@ def get_pbar_remaining(n=0, total=0, start_time=None):
             remaining_time = "未知"
         return remaining_time
     except Exception as e:
-        print(f"Error: {e}")
+        _tools_logger.error("Error calculating remaining time: %s", e)
 
 
 def update_file(final_file, old_file, copy=False):
@@ -289,14 +309,14 @@ def check_ipv6_support():
         return False
     url = "https://ipv6.tokyo.test-ipv6.com/ip/?callback=?&testdomain=test-ipv6.com&testname=test_aaaa"
     try:
-        print(t("msg.check_ipv6_support"))
+        _tools_logger.info(t("msg.check_ipv6_support"))
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
-            print(t("msg.ipv6_supported"))
+            _tools_logger.info(t("msg.ipv6_supported"))
             return True
     except Exception:
         pass
-    print(t("msg.ipv6_not_supported"))
+    _tools_logger.info(t("msg.ipv6_not_supported"))
     return False
 
 
@@ -1171,7 +1191,7 @@ def save_url_content(category: str, url: str, content: str) -> None:
             else:
                 f.write(str(content))
     except Exception as e:
-        print(f"Failed to save content for {url} into {category}: {e}")
+        _tools_logger.error("Failed to save content for %s into %s: %s", url, category, e)
 
 
 def get_subscribe_entries(path: str = "config/subscribe.txt") -> tuple[list, list]:
@@ -1372,7 +1392,7 @@ def disable_urls_in_file(path: str, urls: Iterable[str]) -> dict[str, int]:
 
         return {"disabled": disabled_count, "active": active_count}
     except Exception as e:
-        print(f"Failed to auto-disable urls in {real_path}: {e}")
+        _tools_logger.error("Failed to auto-disable urls in %s: %s", real_path, e)
         return {"disabled": 0, "active": 0}
 
 

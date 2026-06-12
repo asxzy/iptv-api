@@ -22,6 +22,7 @@ from utils.config import config
 from utils.i18n import t
 from utils.speed import clear_cache
 from utils.tools import (
+    get_logger,
     get_pbar_remaining,
     process_nested_dict,
     format_interval,
@@ -37,6 +38,8 @@ from utils.tools import (
 )
 from utils.types import CategoryChannelData
 from utils.whitelist import load_whitelist_maps
+
+logger = get_logger(constants.log_path, init=True)
 
 ProgressCallback = Callable[..., Any]
 
@@ -142,18 +145,17 @@ class UpdateSource:
             seen.add(url)
             subscribe_entries.append(e)
 
-        print(
+        logger.info(
             t("msg.subscribe_urls_whitelist_total").format(
                 default_count=len(default_entries),
                 whitelist_count=len(whitelist_entries),
                 disabled_count=disabled_count,
                 total=len(subscribe_entries),
             ),
-            flush=True,
         )
 
         if not subscribe_entries:
-            print(t("msg.no_subscribe_urls").format(file=constants.subscribe_path), flush=True)
+            logger.warning(t("msg.no_subscribe_urls").format(file=constants.subscribe_path))
             return {}
 
         whitelist_urls = [e['url'] for e in whitelist_entries]
@@ -162,6 +164,7 @@ class UpdateSource:
             subscribe_entries,
             names=channel_names,
             whitelist=whitelist_urls,
+            blacklist=self.blacklist,
             callback=self.update_progress,
         )
 
@@ -186,7 +189,7 @@ class UpdateSource:
         results = await asyncio.gather(*(c for _, c in cors), return_exceptions=True)
         for (attr, _), res in zip(cors, results):
             if isinstance(res, Exception):
-                print(f"{attr} failed: {res}", flush=True)
+                logger.error("%s failed: %s", attr, res)
                 setattr(self, attr, {})
             else:
                 setattr(self, attr, res)
@@ -237,7 +240,7 @@ class UpdateSource:
         )
         self.total = get_urls_len(test_data)
 
-        print(t("msg.total_urls_need_test_speed").format(total=urls_total, speed_total=self.total))
+        logger.info(t("msg.total_urls_need_test_speed").format(total=urls_total, speed_total=self.total))
 
         if self.total <= 0:
             self.aggregator.is_last = True
@@ -308,7 +311,7 @@ class UpdateSource:
             self._prepare_channel_data()
 
             if not self.channel_names:
-                print(t("msg.no_channel_names").format(file=config.source_file), flush=True)
+                logger.warning(t("msg.no_channel_names").format(file=config.source_file))
                 self._notify_ui_finished(main_start_time)
                 return
 
@@ -342,17 +345,16 @@ class UpdateSource:
                     frozen.save(constants.frozen_path)
                 await self._stop_aggregator()
 
-            print(
+            logger.info(
                 t("msg.update_completed").format(
                     time=format_interval(time() - main_start_time),
                     service_tip="",
                 ),
-                flush=True,
             )
             self._notify_ui_finished(main_start_time)
 
         except asyncio.exceptions.CancelledError:
-            print(t("msg.update_cancelled"), flush=True)
+            logger.warning(t("msg.update_cancelled"))
 
     # ----------------------------
     # lifecycle control
@@ -415,7 +417,7 @@ class UpdateSource:
 
                     next_time = min(candidates)
                     wait_seconds = (next_time - self.now).total_seconds()
-                    print(t("msg.schedule_update_time").format(time=next_time.strftime("%Y-%m-%d %H:%M:%S")), flush=True)
+                    logger.info(t("msg.schedule_update_time").format(time=next_time.strftime("%Y-%m-%d %H:%M:%S")))
 
                     try:
                         await asyncio.wait_for(stop_event.wait(), timeout=wait_seconds)
@@ -426,7 +428,7 @@ class UpdateSource:
                         await self.main()
                 else:
                     next_time = self.now + datetime.timedelta(hours=config.update_interval)
-                    print(t("msg.schedule_update_time").format(time=next_time.strftime("%Y-%m-%d %H:%M:%S")), flush=True)
+                    logger.info(t("msg.schedule_update_time").format(time=next_time.strftime("%Y-%m-%d %H:%M:%S")))
 
                     try:
                         await asyncio.wait_for(stop_event.wait(), timeout=config.update_interval * 3600)
@@ -435,14 +437,14 @@ class UpdateSource:
                         await self.main()
 
         except asyncio.CancelledError:
-            print(t("msg.schedule_cancelled"), flush=True)
+            logger.warning(t("msg.schedule_cancelled"))
 
 
 if __name__ == "__main__":
     info = get_version_info()
-    print(t("msg.version_info").format(name=info["name"], version=info["version"], build_time=info["build_time"]), flush=True)
+    logger.info(t("msg.version_info").format(name=info["name"], version=info["version"], build_time=info["build_time"]))
     if not config.open_update:
-        print(t("msg.update_disabled"), flush=True)
+        logger.warning(t("msg.update_disabled"))
     else:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
