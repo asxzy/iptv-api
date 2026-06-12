@@ -8,6 +8,7 @@ import sys
 from urllib.parse import urlsplit, urljoin
 
 import m3u8
+from tqdm import tqdm
 from tqdm.asyncio import tqdm_asyncio
 
 import utils.constants as constants
@@ -143,16 +144,18 @@ def nested_url_blocked(url, blacklist, fetch_text, cache=None, cache_lock=None,
 
 
 def filter_channel_data_nested_blacklist(channel_data, blacklist, make_fetch, retain_origin=(),
-                                         cache=None, cache_lock=None, max_workers=10,
-                                         progress=None) -> int:
+                                         cache=None, cache_lock=None, max_workers=32,
+                                         show_progress=True) -> int:
     """Prune `channel_data` IN PLACE, removing every ChannelData whose url is
     nested-blacklisted (per nested_url_blocked). Covers all sources uniformly.
 
+    Candidate playlist urls are checked concurrently (only .m3u/.m3u8/.txt urls are
+    actually fetched; everything else is a free direct keyword check), with a visible
+    progress bar so the stage is never silent.
+
     - make_fetch: callable(headers) -> (callable(url) -> str). Builds the fetcher for a url's headers.
     - retain_origin: origins exempt from the blacklist (e.g. whitelist/hls).
-    - cache / cache_lock: optional shared per-run verdict cache (so urls already checked
-      elsewhere are not re-fetched).
-    - progress: optional callable invoked once per checked url (for a progress bar).
+    - cache / cache_lock: optional shared per-run verdict cache.
     Returns the number of ChannelData entries removed.
     """
     if not blacklist:
@@ -175,6 +178,13 @@ def filter_channel_data_nested_blacklist(channel_data, blacklist, make_fetch, re
         cache_lock = Lock()
     blocked = set()
     blocked_lock = Lock()
+    pbar = tqdm(
+        total=len(candidates),
+        desc=t("pbar.blacklist"),
+        file=sys.stdout,
+        mininterval=1,
+        dynamic_ncols=False,
+    ) if show_progress else None
 
     def _check(item):
         url, headers = item
@@ -186,11 +196,15 @@ def filter_channel_data_nested_blacklist(channel_data, blacklist, make_fetch, re
         except Exception:
             pass
         finally:
-            if progress:
-                progress()
+            if pbar is not None:
+                pbar.update()
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        list(executor.map(_check, list(candidates.items())))
+    try:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            list(executor.map(_check, list(candidates.items())))
+    finally:
+        if pbar is not None:
+            pbar.close()
 
     if not blocked:
         return 0
@@ -207,9 +221,6 @@ async def get_channels_by_subscribe_urls(
         urls,
         names=None,
         whitelist=None,
-        blacklist=None,
-        nested_blacklist_cache=None,
-        nested_blacklist_lock=None,
         callback=None,
 ):
     """
@@ -263,10 +274,6 @@ async def get_channels_by_subscribe_urls(
     open_auto_disable_source = config.open_auto_disable_source
     disabled_urls = set()
     disabled_lock = Lock()
-    if nested_blacklist_cache is None:
-        nested_blacklist_cache = {}
-    if nested_blacklist_lock is None:
-        nested_blacklist_lock = Lock()
 
     def _mark_disabled(source_url: str, reason: str):
         if not open_auto_disable_source or not source_url:
@@ -315,18 +322,6 @@ async def get_channels_by_subscribe_urls(
                         open_headers=open_headers if m3u_type else False
                     )
 
-                    def _fetch_text(u, _headers=headers):
-                        try:
-                            resp = get_soup_requests(u, timeout=request_timeout, headers_override=_headers)
-                        except Exception:
-                            return ""
-                        if not resp:
-                            return ""
-                        if hasattr(resp, "text"):
-                            resp.encoding = "utf-8"
-                            return resp.text or ""
-                        return str(resp) or ""
-
                     for item in data:
                         data_name = item.get("name", "").strip()
                         url = item.get("value", "").strip()
@@ -339,10 +334,6 @@ async def get_channels_by_subscribe_urls(
                             url_partition = url.partition("$")
                             url = url_partition[0]
                             info = url_partition[2]
-                            if blacklist and not in_whitelist and nested_url_blocked(
-                                    url, blacklist, _fetch_text,
-                                    cache=nested_blacklist_cache, cache_lock=nested_blacklist_lock):
-                                continue
                             value = {
                                 "url": url,
                                 "headers": item.get("headers", None),

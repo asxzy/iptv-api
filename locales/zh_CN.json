@@ -78,6 +78,7 @@
   "msg.update_disabled": "⚠️ 更新功能已被禁用",
   "pbar.progressing": "正在进行",
   "pbar.speed_test": "\uD83D\uDE80 测速",
+  "pbar.blacklist": "\uD83D\uDEAB 黑名单过滤",
   "pbar.get": "获取",
   "pbar.url": "接口",
   "pbar.source": "源",

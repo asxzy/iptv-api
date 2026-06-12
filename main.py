@@ -141,6 +141,7 @@ class UpdateSource:
         if not self.blacklist:
             return
         timeout = config.request_timeout
+        logger.info("Applying nested blacklist before speed test (%d keyword(s))...", len(self.blacklist))
 
         def make_fetch(headers):
             def _fetch_text(u):
@@ -202,9 +203,6 @@ class UpdateSource:
             subscribe_entries,
             names=channel_names,
             whitelist=whitelist_urls,
-            blacklist=self.blacklist,
-            nested_blacklist_cache=self.nested_blacklist_cache,
-            nested_blacklist_lock=self.nested_blacklist_lock,
             callback=self.update_progress,
         )
 

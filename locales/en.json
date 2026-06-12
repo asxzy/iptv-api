@@ -78,6 +78,7 @@
   "msg.update_disabled": "⚠️ Update function has been disabled",
   "pbar.progressing": "Progressing",
   "pbar.speed_test": "\uD83D\uDE80 Speed test",
+  "pbar.blacklist": "\uD83D\uDEAB Blacklist filter",
   "pbar.get": "Get",
   "pbar.url": "url",
   "pbar.source": "source",
