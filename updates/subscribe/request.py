@@ -28,7 +28,6 @@ from utils.tools import (
     check_url_by_keywords,
 )
 
-NESTED_M3U_MAX_DEPTH = 3
 _PLAYLIST_EXTENSIONS = (".m3u", ".m3u8", ".txt")
 
 logger = get_logger(constants.log_path)
@@ -102,14 +101,21 @@ def _parse_aggregation_children(content: str, base_url: str = "") -> list:
 def nested_url_blocked(url, blacklist, fetch_text, cache=None, cache_lock=None,
                        depth=0, _in_progress=None) -> bool:
     """All-or-nothing recursive blacklist check.
+
+    Recursion is NOT depth-limited: it keeps following nested links as long as the
+    url is itself a playlist (.m3u/.m3u8/.txt), and stops once the url is not a
+    playlist (a real media/leaf) or the fetch yields nothing. The cycle guard
+    (`_in_progress`) guarantees termination on self-referential playlists.
+
     - fetch_text: callable(url)->str, returns content or "" on failure.
     - cache: optional dict[str,bool] shared across calls (thread-safe via cache_lock).
+    - depth: tracked only to gate caching (deeper verdicts may be cycle-truncated).
     """
     if not blacklist or not url:
         return False
     if check_url_by_keywords(url, blacklist):
         return True
-    if depth >= NESTED_M3U_MAX_DEPTH or not _looks_like_playlist_url(url):
+    if not _looks_like_playlist_url(url):
         return False
     if cache is not None:
         if cache_lock is not None:

@@ -15,7 +15,7 @@ if _REPO_ROOT not in sys.path:
 
 from collections import defaultdict
 
-from updates.subscribe.request import nested_url_blocked, NESTED_M3U_MAX_DEPTH, filter_channel_data_nested_blacklist
+from updates.subscribe.request import nested_url_blocked, filter_channel_data_nested_blacklist
 
 
 # ---------------------------------------------------------------------------
@@ -194,22 +194,16 @@ def test_7_cycle_terminates():
     assert result is False, "Expected False: cycle with no blacklist hit"
 
 
-def test_8_depth_limit():
-    """Chain longer than NESTED_M3U_MAX_DEPTH: blacklisted url beyond the limit → False.
-
-    This is an intentional safety bound: we do not recurse past NESTED_M3U_MAX_DEPTH
-    levels to prevent runaway fetches from deeply nested or malicious playlists.
-    """
-    # Build a chain of depth NESTED_M3U_MAX_DEPTH + 2 where only the deepest node is blacklisted.
+def test_8_no_depth_limit_deep_chain_blocked():
+    """Recursion is NOT depth-limited: a blacklisted url buried arbitrarily deep in a
+    chain of nested m3u8 playlists is still caught. Recursion only stops at a
+    non-playlist (leaf) url."""
     mapping = {}
-    depth_limit = NESTED_M3U_MAX_DEPTH
-    # Node at depth_limit + 1 (beyond limit) holds the blacklisted url
-    deep_url = f"http://host.example.com/level{depth_limit + 1}.m3u8"
-    mapping[deep_url] = make_m3u("http://bad.example.com/deep.ts")
-
-    # Build chain from depth_limit down to 0
-    prev = deep_url
-    for d in range(depth_limit, -1, -1):
+    chain_len = 10  # far deeper than any old limit
+    deepest = f"http://host.example.com/level{chain_len}.m3u8"
+    mapping[deepest] = make_m3u("http://bad.example.com/deep.ts")
+    prev = deepest
+    for d in range(chain_len - 1, -1, -1):
         current = f"http://host.example.com/level{d}.m3u8"
         mapping[current] = make_m3u(prev)
         prev = current
@@ -217,9 +211,10 @@ def test_8_depth_limit():
     root = "http://host.example.com/level0.m3u8"
     fake = FakeFetch(mapping)
     result = nested_url_blocked(root, BLACKLIST, fake)
-    assert result is False, (
-        f"Expected False: blacklisted url is beyond depth limit {NESTED_M3U_MAX_DEPTH}"
-    )
+    assert result is True, "Expected True: deep blacklisted url must be caught (no depth limit)"
+    # Every level was fetched on the way down (no early depth cutoff).
+    assert fake.call_counts[f"http://host.example.com/level{chain_len}.m3u8"] == 1, \
+        "Deepest playlist must be reached and fetched"
 
 
 def test_9_cache_prevents_duplicate_fetches():
@@ -418,7 +413,7 @@ _ALL_TESTS = [
     test_6b_hls_media_segments_not_checked,
     test_6c_hls_master_blacklisted_variant_real_repro,
     test_7_cycle_terminates,
-    test_8_depth_limit,
+    test_8_no_depth_limit_deep_chain_blocked,
     test_9_cache_prevents_duplicate_fetches,
     test_10_fetch_failure_not_blocked,
     test_11_cycle_with_blacklisted_sibling_shared_cache,
