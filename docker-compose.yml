@@ -1,6 +1,6 @@
 services:
   iptv-api:
-    image: guovern/iptv-api:latest
+    build: .
     container_name: iptv-api
     restart: unless-stopped
     tty: true
@@ -10,8 +10,8 @@ services:
       - "80:8080"
 
     volumes:
-      - /iptv-api/config:/iptv-api/config
-      - /iptv-api/output:/iptv-api/output
+      - ./config:/iptv-api/config
+      - ./output:/iptv-api/output
 
     environment:
       PUBLIC_SCHEME: "http"
@@ -21,3 +21,10 @@ services:
       NGINX_HTTP_PORT: "8080"
       CDN_URL: ""
       HTTP_PROXY: ""
+
+networks:
+  default:
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: "fd00::/80"
