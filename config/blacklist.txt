@@ -3,6 +3,7 @@
 /audio/
 bxtv.3a.ink
 nosignal
+no_signal
 3y1.xyz
 iptv.catvod.com
 backup
