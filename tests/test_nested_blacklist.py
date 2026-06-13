@@ -417,6 +417,81 @@ def test_F4_real_world_nosignal_repro():
     assert channel_data["Sports"]["SomeChannel"] == [], "nosignal master must be removed"
 
 
+def test_15_failed_fetch_verdict_not_cached():
+    """Fix-B repro: a FAILED fetch (real fetch returns ([], "") on timeout/error) must NOT
+    have its 'not blocked' verdict frozen in the shared cache. A successful empty fetch
+    (chain=[url], content="") is genuinely clean and may be cached; a failed fetch
+    (chain==[]) is *unknown* and must be re-evaluated, so a later successful fetch can
+    still block it. Otherwise one transient timeout permanently whitelists a bad url."""
+    url = "http://flaky.example.com/list.m3u8"
+    content = make_m3u("http://bad.example.com/stream.ts")  # blacklisted child
+
+    class FlakyFetch:
+        def __init__(self):
+            self.calls = 0
+
+        def __call__(self, u):
+            self.calls += 1
+            if self.calls == 1:
+                return [], ""          # simulated timeout / connection error
+            return [u], content        # recovers on retry/second pass
+
+    fake = FlakyFetch()
+    cache = {}
+
+    r1 = nested_url_blocked(url, BLACKLIST, fake, cache=cache)
+    assert r1 is False, "Failed fetch must not block (no over-block on uncertainty)"
+    assert url not in cache, "A failed-fetch verdict must NOT be cached"
+
+    r2 = nested_url_blocked(url, BLACKLIST, fake, cache=cache)
+    assert r2 is True, "Second pass fetch succeeds and must block the bad child"
+
+
+def test_F5_history_recheck_catches_base_pass_miss():
+    """Fix-A + Fix-B end-to-end: simulates main's two passes (base data, then history
+    cache) sharing one verdict cache. The first (base) pass fetch FAILS, so the url
+    survives. The second (history) pass re-checks the same url with the shared cache;
+    because the failed verdict was not frozen, the now-successful fetch blocks it.
+    Proves a transient base-pass miss can't permanently leak via history."""
+    master_url = (
+        "https://stream1.freetv.fun/"
+        "df7cf71b3e02015b9029ac087b3eec56fde92fd81d162962570629faec293037.m3u8"
+    )
+    master_content = (
+        "#EXTM3U\n"
+        "#EXT-X-STREAM-INF:BANDWIDTH=4000000,RESOLUTION=1920x1080\n"
+        "http://files4.3y1.xyz/media/video/nosignal_h264/playlist.m3u8\n"
+    )
+
+    class FlakyFetch:
+        def __init__(self):
+            self.calls = 0
+
+        def __call__(self, u):
+            self.calls += 1
+            if self.calls == 1:
+                return [], ""          # base pass: timeout
+            return [u], master_content  # history pass: recovers
+
+    fake = FlakyFetch()
+    make_fetch = lambda headers: fake  # noqa: E731
+    shared_cache = {}
+
+    base = _make_channel_data(("Sports", "CCTV5", master_url, "subscribe", None))
+    history = _make_channel_data(("Sports", "CCTV5", master_url, "subscribe", None))
+
+    removed_base = filter_channel_data_nested_blacklist(
+        base, ["nosignal"], make_fetch, cache=shared_cache, show_progress=False
+    )
+    assert removed_base == 0, "Base pass fetch failed → url survives (fail-open)"
+
+    removed_hist = filter_channel_data_nested_blacklist(
+        history, ["nosignal"], make_fetch, cache=shared_cache, show_progress=False
+    )
+    assert removed_hist == 1, "History pass must re-check and remove the nosignal master"
+    assert history["Sports"]["CCTV5"] == [], "Blacklisted history entry must be removed"
+
+
 def test_R1_redirect_target_blacklisted():
     """A non-playlist url that 302-redirects to a blacklisted placeholder is caught by
     the redirect TARGET url, not silently followed. (catvod live.php -> backup.m3u8)"""
@@ -482,6 +557,8 @@ _ALL_TESTS = [
     test_12_hls_marker_inside_url_fragment,
     test_13_txt_nested_aggregation,
     test_14_blacklist_noop,
+    test_15_failed_fetch_verdict_not_cached,
+    test_F5_history_recheck_catches_base_pass_miss,
     test_F1_blacklisted_removed_clean_kept,
     test_F2_retain_origin_exempt,
     test_F3_empty_blacklist_noop,

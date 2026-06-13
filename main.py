@@ -134,33 +134,71 @@ class UpdateSource:
         if config.open_history and os.path.exists(constants.frozen_path):
             frozen.load(constants.frozen_path)
 
+    def _make_blacklist_fetch(self):
+        """Build the make_fetch(headers) used by the nested blacklist passes.
+
+        The first attempt uses a short timeout to keep the pass snappy on dead/slow hosts.
+        But a FAILED fetch (empty chain) means we couldn't verify the url at all -- treating
+        that as "clean" fails open and lets a working placeholder (e.g. a 'nosignal' stream,
+        which the speed test will happily keep) slip into results. So a failed snappy fetch
+        of a playlist gets one more chance with the full request_timeout before we give up."""
+        primary_timeout = min(config.request_timeout, 5)
+        retry_timeout = config.request_timeout
+        do_retry = retry_timeout > primary_timeout
+
+        def make_fetch(headers):
+            def _fetch(u):
+                chain, content = get_redirect_chain_content(
+                    u, timeout=primary_timeout, headers_override=headers
+                )
+                if not chain and do_retry:
+                    chain, content = get_redirect_chain_content(
+                        u, timeout=retry_timeout, headers_override=headers
+                    )
+                return chain, content
+            return _fetch
+
+        return make_fetch
+
     def _filter_nested_blacklist(self):
         """Apply the nested m3u/m3u8 blacklist to the fully-merged channel data, BEFORE
         the speed test, so it covers all sources (subscribe, local, history). Reuses the
         per-run cache populated during subscribe parsing to avoid re-fetching."""
         if not self.blacklist:
             return
-        # A small playlist that won't return within a few seconds is a dead/slow host;
-        # treat it as not-blocked (kept) and let the speed test drop it. Keeps this
-        # pre-probe pass snappy instead of stalling on the full request_timeout per url.
-        timeout = min(config.request_timeout, 5)
         logger.info("Applying nested blacklist before speed test (%d keyword(s))...", len(self.blacklist))
-
-        def make_fetch(headers):
-            def _fetch(u):
-                return get_redirect_chain_content(u, timeout=timeout, headers_override=headers)
-            return _fetch
 
         removed = filter_channel_data_nested_blacklist(
             self.channel_data,
             self.blacklist,
-            make_fetch,
+            self._make_blacklist_fetch(),
             retain_origin=retain_origin,
             cache=self.nested_blacklist_cache,
             cache_lock=self.nested_blacklist_lock,
         )
         if removed:
             logger.info("Nested blacklist removed %d url(s) before speed test", removed)
+
+    def _filter_history_nested_blacklist(self, cache):
+        """Prune the loaded history/cache result through the SAME nested blacklist, reusing
+        the per-run verdict cache so urls already judged in the base-data pass cost nothing.
+
+        Without this, sort_channel_result re-emits history entries verbatim (no blacklist
+        check), so a blacklisted url that ever reached a previous result would persist
+        across every future run, bypassing the filter entirely."""
+        if not (self.blacklist and cache):
+            return
+        removed = filter_channel_data_nested_blacklist(
+            cache,
+            self.blacklist,
+            self._make_blacklist_fetch(),
+            retain_origin=retain_origin,
+            cache=self.nested_blacklist_cache,
+            cache_lock=self.nested_blacklist_lock,
+            show_progress=False,
+        )
+        if removed:
+            logger.info("Nested blacklist removed %d url(s) from loaded history", removed)
 
     # ----------------------------
     # stage 2: fetch subscribe/epg (concurrent)
@@ -365,6 +403,7 @@ class UpdateSource:
             self._filter_nested_blacklist()
 
             cache = self._load_cache()
+            self._filter_history_nested_blacklist(cache)
 
             await self._start_aggregator(cache)
             try:

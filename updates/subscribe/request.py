@@ -141,8 +141,15 @@ def nested_url_blocked(url, blacklist, fetch, cache=None, cache_lock=None,
         return False
     _in_progress.add(url)
     blocked = False
+    # A failed fetch returns ([], "") -- distinct from a successful fetch of a non-playlist
+    # leaf (chain=[url], content=""). A failed fetch is an UNKNOWN, not a clean verdict:
+    # caching it would freeze one transient timeout into a permanent whitelist, and the
+    # history re-check pass could never recover. Track it so we skip caching below.
+    fetch_failed = False
     try:
         chain, content = fetch(url)
+        if not chain:
+            fetch_failed = True
         # 1) Blacklist-check every redirect target (don't silently follow to a placeholder).
         for target in chain:
             if target and target != url and check_url_by_keywords(target, blacklist):
@@ -158,8 +165,10 @@ def nested_url_blocked(url, blacklist, fetch, cache=None, cache_lock=None,
                     break
     finally:
         _in_progress.discard(url)
-    # Only cache top-level (complete) verdicts; deeper verdicts may be cycle-truncated and context-dependent.
-    if cache is not None and depth == 0:
+    # Only cache top-level (complete) verdicts; deeper verdicts may be cycle-truncated and
+    # context-dependent. Never cache a verdict derived from a failed fetch (see above) --
+    # unless we still managed to block it (e.g. via a redirect target), which is authoritative.
+    if cache is not None and depth == 0 and (blocked or not fetch_failed):
         if cache_lock is not None:
             with cache_lock:
                 cache[url] = blocked
