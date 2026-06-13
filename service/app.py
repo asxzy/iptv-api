@@ -64,14 +64,29 @@ def show_txt():
     return get_result_file_content(path=config.final_file, file_type="txt")
 
 
+@app.route("/txt/multi")
+def show_txt_multi():
+    return get_result_file_content(path=config.final_file, file_type="txt", merge_source=True)
+
+
 @app.route("/ipv4/txt")
 def show_ipv4_txt():
     return get_result_file_content(path=constants.ipv4_result_path, file_type="txt")
 
 
+@app.route("/ipv4/txt/multi")
+def show_ipv4_txt_multi():
+    return get_result_file_content(path=constants.ipv4_result_path, file_type="txt", merge_source=True)
+
+
 @app.route("/ipv6/txt")
 def show_ipv6_txt():
     return get_result_file_content(path=constants.ipv6_result_path, file_type="txt")
+
+
+@app.route("/ipv6/txt/multi")
+def show_ipv6_txt_multi():
+    return get_result_file_content(path=constants.ipv6_result_path, file_type="txt", merge_source=True)
 
 
 @app.route("/hls")
@@ -85,14 +100,29 @@ def show_hls_txt():
     return get_result_file_content(path=constants.hls_result_path, file_type="txt")
 
 
+@app.route("/hls/txt/multi")
+def show_hls_txt_multi():
+    return get_result_file_content(path=constants.hls_result_path, file_type="txt", merge_source=True)
+
+
 @app.route("/hls/ipv4/txt")
 def show_hls_ipv4_txt():
     return get_result_file_content(path=constants.hls_ipv4_result_path, file_type="txt")
 
 
+@app.route("/hls/ipv4/txt/multi")
+def show_hls_ipv4_txt_multi():
+    return get_result_file_content(path=constants.hls_ipv4_result_path, file_type="txt", merge_source=True)
+
+
 @app.route("/hls/ipv6/txt")
 def show_hls_ipv6_txt():
     return get_result_file_content(path=constants.hls_ipv6_result_path, file_type="txt")
+
+
+@app.route("/hls/ipv6/txt/multi")
+def show_hls_ipv6_txt_multi():
+    return get_result_file_content(path=constants.hls_ipv6_result_path, file_type="txt", merge_source=True)
 
 
 @app.route("/m3u")

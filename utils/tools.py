@@ -519,10 +519,49 @@ def convert_to_m3u(path=None, first_channel_name=None, data=None):
                 m3u_file.write(m3u_output)
 
 
-def get_result_file_content(path=None, show_content=False, file_type=None):
+def merge_txt_multi_source(content):
     """
-    Get the content of the result file
+    Collapse a result txt so each station occupies a single line whose sources are joined
+    by '#' (URL1#URL2#URL3), for players that accept multiple sources per channel.
+
+    The writer emits a station's sources as consecutive `name,url` lines, so consecutive
+    lines sharing the same name are merged. Category markers (`分类,#genre#`), blank lines
+    and malformed (comma-less) lines pass through untouched and break a run. Only the first
+    comma splits name/url, so any `$extra_info` suffix on the url is preserved.
     """
+    out = []
+    cur_name = None
+    cur_urls = []
+
+    def flush():
+        if cur_name is not None:
+            out.append(f"{cur_name},{'#'.join(cur_urls)}")
+
+    for raw in content.split("\n"):
+        line = raw.rstrip("\r")
+        stripped = line.strip()
+        if not stripped or stripped.endswith(",#genre#") or "," not in line:
+            flush()
+            cur_name, cur_urls = None, []
+            out.append(line)
+            continue
+        name, url = line.split(",", 1)
+        if name == cur_name:
+            cur_urls.append(url)
+        else:
+            flush()
+            cur_name, cur_urls = name, [url]
+    flush()
+    return "\n".join(out)
+
+
+def get_result_file_content(path=None, show_content=False, file_type=None, merge_source=False):
+    """
+    Get the content of the result file. When merge_source is True, the txt is collapsed so
+    each station has a single '#'-joined multi-source line (see merge_txt_multi_source).
+    """
+    if merge_source:
+        file_type = "txt"
     result_file = (
         os.path.splitext(path)[0] + f".{file_type}"
         if file_type
@@ -536,6 +575,8 @@ def get_result_file_content(path=None, show_content=False, file_type=None):
                 return send_file(resource_path(result_file), as_attachment=True)
         with open(result_file, "r", encoding="utf-8") as file:
             content = file.read()
+        if merge_source:
+            content = merge_txt_multi_source(content)
     else:
         content = constants.waiting_tip
     response = make_response(content)
