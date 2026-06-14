@@ -97,3 +97,15 @@ def encoding_adequacy(resolution, bitrate_bps, fps, video_codec, weights=DEFAULT
     codec_factor = CODEC_EFFICIENCY.get((video_codec or "").lower(), 1.0)
     adjusted_bpp = bpp / codec_factor
     return min(1.0, adjusted_bpp / weights["target_bpp"])
+
+
+def quality_score(result, weights=DEFAULT_WEIGHTS):
+    """Blend resolution, encoding adequacy, and fps into a 0-1 quality score."""
+    resolution = result.get("resolution")
+    bitrate = result.get("bitrate")
+    fps = result.get("fps")
+    codec = result.get("video_codec")
+    rs = resolution_score(resolution)
+    es = encoding_adequacy(resolution, bitrate, fps, codec, weights)
+    fs = fps_score(fps)
+    return weights["w_res"] * rs + weights["w_enc"] * es + weights["w_fps"] * fs

@@ -65,3 +65,23 @@ def test_encoding_adequacy_missing_signal_is_neutral():
     assert encoding_adequacy("1920x1080", None, 25, "h264", DEFAULT_WEIGHTS) == NEUTRAL
     assert encoding_adequacy(None, 5_000_000, 25, "h264", DEFAULT_WEIGHTS) == NEUTRAL
     assert encoding_adequacy("1920x1080", 0, 25, "h264", DEFAULT_WEIGHTS) == NEUTRAL
+
+
+def test_quality_score_in_unit_range_and_resolution_dominates():
+    from utils.scoring import quality_score, DEFAULT_WEIGHTS
+    hi = quality_score({"resolution": "3840x2160", "bitrate": 20_000_000,
+                        "fps": 60, "video_codec": "hevc"}, DEFAULT_WEIGHTS)
+    lo = quality_score({"resolution": "640x360", "bitrate": 500_000,
+                        "fps": 25, "video_codec": "h264"}, DEFAULT_WEIGHTS)
+    assert 0.0 <= lo < hi <= 1.0
+
+
+def test_quality_score_fake_1080p_loses_to_honest_720p():
+    from utils.scoring import quality_score, DEFAULT_WEIGHTS
+    # under-encoded 1080p: bitrate far below "good enough" for its pixels
+    fake_1080 = quality_score({"resolution": "1920x1080", "bitrate": 600_000,
+                              "fps": 25, "video_codec": "h264"}, DEFAULT_WEIGHTS)
+    # honest 720p: well-encoded
+    honest_720 = quality_score({"resolution": "1280x720", "bitrate": 4_000_000,
+                               "fps": 25, "video_codec": "h264"}, DEFAULT_WEIGHTS)
+    assert honest_720 > fake_1080
