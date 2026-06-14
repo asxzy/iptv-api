@@ -30,7 +30,19 @@ min_speed_value = config.min_speed
 resolution_speed_map = config.resolution_speed_map
 speed_test_limit = config.speed_test_limit
 ranking_weights = config.ranking_weights
-full_probe = config.open_full_probe or os.path.exists(constants.cache_path)
+
+
+def _full_probe_enabled() -> bool:
+    """
+    Whether to run ffprobe on every candidate to enrich quality signals.
+    Evaluated per call (not at import) so scheduler runs pick up the history
+    cache written by a previous run. Honors open_history; force via open_full_probe.
+    """
+    if config.open_full_probe:
+        return True
+    return config.open_history and os.path.exists(constants.cache_path)
+
+
 m3u8_headers = ['application/x-mpegurl', 'application/vnd.apple.mpegurl', 'audio/mpegurl', 'audio/x-mpegurl']
 default_ipv6_delay = 0.1
 default_ipv6_resolution = "1920x1080"
@@ -273,6 +285,7 @@ async def get_result(url: str, headers: dict = None, resolution: str = None,
     except:
         pass
     finally:
+        full_probe = _full_probe_enabled()
         need_probe = (
             not location and info.get('delay') != -1 and (
                 (filter_resolution and not info.get('resolution'))
@@ -468,7 +481,15 @@ def sample_segment_urls(segment_urls: list, limit: int) -> list:
 
 def get_avg_result(result) -> TestResult:
     bitrates = [item.get("bitrate") for item in result if item.get("bitrate")]
-    fps_values = [item.get("fps") for item in result if item.get("fps")]
+    fps_values = []
+    for item in result:
+        fv = item.get("fps")
+        if fv is None:
+            continue
+        try:
+            fps_values.append(float(fv))
+        except (TypeError, ValueError):
+            continue
     video_codec = next((item.get("video_codec") for item in result if item.get("video_codec")), None)
     audio_codec = next((item.get("audio_codec") for item in result if item.get("audio_codec")), None)
     return {

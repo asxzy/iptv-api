@@ -228,3 +228,13 @@ def test_parse_probe_data_extracts_bitrate():
     })
     assert meta["resolution"] == "1920x1080"
     assert meta["bitrate"] == 5000000.0
+
+
+def test_get_avg_result_coerces_string_fps():
+    from utils.speed import get_avg_result
+    avg = get_avg_result([
+        {"speed": 4.0, "delay": 100, "resolution": "1280x720", "fps": "25"},
+        {"speed": 6.0, "delay": 200, "resolution": "1280x720", "fps": "50.0"},
+        {"speed": 5.0, "delay": 150, "resolution": "1280x720", "fps": "bad"},
+    ])
+    assert avg["fps"] == 50.0
