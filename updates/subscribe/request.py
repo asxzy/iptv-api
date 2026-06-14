@@ -51,14 +51,16 @@ def _parse_aggregation_children(content: str, base_url: str = "") -> list:
     """Return the nested m3u/m3u8 links and station URLs contained in `content`,
     resolving relative URIs against `base_url`.
 
-    Included (these are "links" we must blacklist-check / recurse into):
+    Included:
     - HLS master-playlist variant streams (#EXT-X-STREAM-INF -> nested .m3u8 links).
-    - #EXTINF:-1 aggregation channels (the stations URL_B_i / URL_C_j).
+    - ALL segment URIs (both live/station markers with -1 duration and media
+      segments with positive duration). Media segment URIs are checked against
+      the blacklist via direct keyword match in nested_url_blocked, which runs
+      before the terminal-media early-return — no network fetch is performed.
     - Plain "name,url" txt entries and bare URL-per-line lists.
 
-    Excluded:
-    - HLS media segments (.ts, positive #EXTINF duration). Per requirement, the media
-      source itself is never blacklist-checked here -- only the nested links are.
+    NOTE: terminal media extensions (.ts/.flv/...) are never fetched by
+    nested_url_blocked (direct keyword match → blocked | clean → False).
     """
     if not content:
         return []
@@ -75,9 +77,7 @@ def _parse_aggregation_children(content: str, base_url: str = "") -> list:
                 if playlist.uri:
                     raw_children.append(playlist.uri)
             for segment in parsed.segments:
-                # duration < 0 (e.g. -1) marks a live channel/station, not a media segment;
-                # positive-duration segments are media (.ts) and are intentionally skipped.
-                if segment.uri and (segment.duration is None or segment.duration < 0):
+                if segment.uri:
                     raw_children.append(segment.uri)
         else:
             # Aggregation lists with attributes (#EXTINF:-1 tvg-... ,Name) make m3u8 raise;

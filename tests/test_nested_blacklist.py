@@ -169,15 +169,22 @@ def test_6_hls_master_clean_variants_recursed():
         "Master variant must be resolved against base and followed"
 
 
-def test_6b_hls_media_segments_not_checked():
-    """HLS media-playlist segments (.ts, positive #EXTINF duration) are the media source
-    itself and must NOT be blacklist-checked, even when a segment path contains a
-    blacklisted keyword like '/audio/'."""
+def test_6b_hls_media_segments_checked():
+    """HLS media-playlist segments (.ts, positive #EXTINF duration) have their URIs
+    checked against the blacklist. A segment URL containing '/audio/' matches the
+    blacklist, so the parent playlist is blocked. The segment itself is never fetched
+    (terminal-media early-return after keyword match)."""
     media_content = make_hls_media("seg/audio/0.ts", "seg/audio/1.ts")
     fake = FakeFetch({"http://host.example.com/media.m3u8": media_content})
     result = nested_url_blocked("http://host.example.com/media.m3u8", BLACKLIST, fake, cache={})
-    assert result is False, \
-        "Expected False: media segments are not nested links and are not checked"
+    assert result is True, \
+        "Expected True: segment URI matches blacklisted '/audio/'"
+    # The parent playlist itself was fetched (1 call), but the blacklisted segment
+    # URL was caught by direct keyword match and never fetched.
+    assert fake.call_counts.get("http://host.example.com/seg/audio/0.ts", 0) == 0, \
+        "Blacklisted segment URL must never be fetched"
+    assert fake.call_counts.get("http://host.example.com/seg/audio/1.ts", 0) == 0, \
+        "Sibling segment must also never be fetched (short-circuit on first blocked)"
 
 
 def test_6c_hls_master_blacklisted_variant_real_repro():
@@ -547,7 +554,7 @@ _ALL_TESTS = [
     test_4_nested_m3u8_one_child_blacklisted,
     test_5_deep_nesting_blocked_at_leaf,
     test_6_hls_master_clean_variants_recursed,
-    test_6b_hls_media_segments_not_checked,
+    test_6b_hls_media_segments_checked,
     test_6c_hls_master_blacklisted_variant_real_repro,
     test_7_cycle_terminates,
     test_8_no_depth_limit_deep_chain_blocked,
