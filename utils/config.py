@@ -395,10 +395,6 @@ class ConfigManager:
     def open_proxy(self):
         return self.config.getboolean("Settings", "open_proxy", fallback=True)
 
-    @property
-    def proxy_segments(self):
-        return self.config.getboolean("Settings", "proxy_segments", fallback=False)
-
     def load(self):
         """
         Load the config

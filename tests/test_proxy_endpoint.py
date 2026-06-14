@@ -1,5 +1,5 @@
 """
-Flask endpoint tests for GET /proxy and GET /proxy/segment.
+Flask endpoint tests for GET /proxy.
 
 Run via:
     python -m pytest tests/test_proxy_endpoint.py
@@ -191,45 +191,6 @@ def test_proxy_disabled_returns_404(client):
 
 
 # ---------------------------------------------------------------------------
-# Test: /proxy/segment missing url param → 400
-# ---------------------------------------------------------------------------
-
-def test_segment_missing_url_returns_400(client):
-    resp = client.get("/proxy/segment")
-    assert resp.status_code == 400
-    data = resp.get_json()
-    assert data is not None
-    assert "error" in data
-
-
-# ---------------------------------------------------------------------------
-# Test: /proxy/segment streams upstream bytes (mocked)
-# ---------------------------------------------------------------------------
-
-def test_segment_streams_upstream(client):
-    fake_content = b"\x47\x40\x00\x10" * 10  # fake TS packets
-
-    class _FakeResp:
-        status_code = 200
-        headers = {"Content-Type": "video/MP2T"}
-
-        def iter_content(self, chunk_size=8192):
-            yield fake_content
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            pass
-
-    with mock.patch("service.app._requests.get", return_value=_FakeResp()):
-        resp = client.get("/proxy/segment?url=http%3A%2F%2Fcdn.example.com%2Fseg.ts")
-
-    assert resp.status_code == 200
-    assert resp.data == fake_content
-
-
-# ---------------------------------------------------------------------------
 # Test: /proxy uses chain[-1] as base_url for relative URI resolution
 # ---------------------------------------------------------------------------
 
@@ -261,8 +222,6 @@ _ALL_TESTS = [
     test_proxy_upstream_empty_returns_502,
     test_proxy_upstream_whitespace_returns_502,
     test_proxy_disabled_returns_404,
-    test_segment_missing_url_returns_400,
-    test_segment_streams_upstream,
     test_proxy_resolves_relative_uris_against_redirect_target,
 ]
 

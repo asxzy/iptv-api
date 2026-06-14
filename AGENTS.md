@@ -151,8 +151,7 @@ Serves result files at multiple endpoints. `service/app.py`:
 | `/log/*` | Log access |
 | `/logo/<path>` | Channel logo serving |
 | `/stat` | RTMP statistics |
-| `/proxy?url=<upstream>` | Real-time HLS ad-filtering proxy: fetches upstream playlist live, strips injected ad segments (keyword/regex/CUE-OUT-IN/discontinuity), rewrites nested URIs back through `/proxy` |
-| `/proxy/segment?url=<seg>` | Optional pass-through segment streamer (only when `proxy_segments=True`) |
+| `/proxy?url=<upstream>` | Real-time HLS ad-filtering proxy: reads the upstream playlist (text only), drops injected ad segments by URL match (+ CUE-OUT/IN & discontinuity markers), rewrites nested playlist URIs back through `/proxy` and segment URIs to absolute CDN URLs (media never transits the server) |
 | `/proxy/m3u`, `/proxy/txt`, `/proxy/txt/multi` | Result station list with every station URL rewritten to an absolute `…/proxy?url=<original>` link, so a player loading the list streams everything through the ad filter |
 
 Run with gunicorn in production: `gunicorn service.app:app -b 127.0.0.1:5180 --timeout=1000` (see `entrypoint.sh`).

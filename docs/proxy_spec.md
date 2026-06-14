@@ -15,15 +15,18 @@ flowing through the proxy, and serve a clean playlist.
     `#EXT-X-I-FRAME-STREAM-INF:...URI="..."`) to `/proxy?url=<absolute resolved variant>`
     so the media playlist it points to also gets filtered. Keep all variant lines.
   - **Media playlist**: drop ad segments (see Ad detection), rewrite each kept segment URI
-    to an **absolute** URL (resolved against the upstream base) by default so media bytes
-    go straight to the CDN and don't transit our server. Also rewrite `#EXT-X-KEY:URI=`
-    and `#EXT-X-MAP:URI=` to absolute. If `proxy_segments` config is on, rewrite segment
-    URIs to `/proxy/segment?url=<absolute>` instead (route streams bytes through us).
+    to an **absolute** URL (resolved against the upstream base) so media bytes go straight
+    to the CDN and never transit our server. Also rewrite `#EXT-X-KEY:URI=` and
+    `#EXT-X-MAP:URI=` to absolute.
   - Errors: 400 if `url` missing/malformed; 502 if upstream fetch fails / empty.
-  - Response mimetype: `application/vnd.apple.mpegurl`.
-- `GET /proxy/segment?url=<urlencoded segment URL>` (only used when `proxy_segments` on)
-  - Stream the upstream segment bytes back to the client (pass-through), preserving
-    content-type. Keeps it lightweight; default OFF.
+  - Response: `application/vnd.apple.mpegurl; charset=utf-8`.
+
+**Design note — URL-only, no byte relay.** The server only ever reads the (tiny) playlist
+text; blocking is a pure URL decision. A provider can only hijack a stream by inserting ad
+**segment URIs** into the playlist — it cannot tamper with the segment bytes — so there is
+no reason to download/relay media through the server. Segments are emitted as absolute CDN
+URLs and fetched directly by the player. (Earlier drafts had an optional `proxy_segments`
+byte-streaming `/proxy/segment` route; it was removed as overkill.)
 
 ## Ad detection (configurable) — `AdFilter`
 1. **Keyword blocklist** — substring match on the *resolved* segment/variant URI.
@@ -56,8 +59,8 @@ def is_media_playlist(content: str) -> bool            # has #EXTINF / #EXT-X-TA
 def build_proxy_url(proxy_base: str, target_url: str) -> str
 def resolve_uri(base_url: str, uri: str) -> str        # urljoin, leave absolute as-is
 def filter_master_playlist(content, base_url, proxy_base) -> str
-def filter_media_playlist(content, base_url, ad_filter, segment_proxy_base=None) -> str
-def filter_playlist(content, base_url, proxy_base, ad_filter, segment_proxy_base=None)
+def filter_media_playlist(content, base_url, ad_filter) -> str   # segments → absolute CDN URLs
+def filter_playlist(content, base_url, proxy_base, ad_filter)
     -> tuple[str, str]   # (filtered_text, "master"|"media"|"passthrough")
 ```
 
@@ -76,7 +79,6 @@ Preserve unknown tags verbatim. Preserve trailing-newline structure.
 
 ## Config additions (`utils/config.py`, `config/config.ini`)
 - `open_proxy` (bool, default True) — toggle endpoints.
-- `proxy_segments` (bool, default False) — stream segment bytes through `/proxy/segment`.
 - New path constant `proxy_ad_filter_path = config/proxy_ad_filter.txt` in `utils/constants.py`.
 
 ## Proxied station-list endpoints (added in phase 2)
@@ -116,7 +118,7 @@ def rewrite_list_to_proxy(content: str, file_type: str, proxy_base: str) -> str
 - `tests/test_proxy_filter.py` — pure-function unit tests (self-contained, pytest + main runner),
   covering: master rewrite (variant + EXT-X-MEDIA + I-FRAME URIs, relative resolution),
   media keyword drop, regex drop, CUE-OUT/IN drop, discontinuity-bounded drop (and
-  clean-discontinuity keep), EXT-X-KEY/MAP rewrite, segment_proxy_base rewrite, master/media
+  clean-discontinuity keep), EXT-X-KEY/MAP rewrite, segments always absolute, master/media
   detection, empty/passthrough, trailing newline preservation, no-filter no-op.
 - `tests/test_proxy_endpoint.py` — Flask test client with monkeypatched upstream fetch:
   `/proxy` master→rewritten, `/proxy` media→ad-stripped, missing url→400, upstream fail→502.

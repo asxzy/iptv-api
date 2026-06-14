@@ -14,8 +14,7 @@ import logging
 from utils.i18n import t
 from werkzeug.utils import secure_filename
 import mimetypes
-import requests as _requests
-from utils.requests.tools import get_redirect_chain_content, headers as _default_headers
+from utils.requests.tools import get_redirect_chain_content
 from service.proxy import load_ad_filters, filter_playlist, rewrite_list_to_proxy
 
 # Module-level cached AdFilter — loaded once at import time for performance.
@@ -321,13 +320,14 @@ def proxy_playlist():
     """
     GET /proxy?url=<urlencoded upstream HLS playlist URL>
 
-    Fetches the upstream playlist, strips ad segments (using the module-level
-    cached AdFilter), rewrites nested URIs, and returns a clean playlist.
+    Fetches the upstream playlist (small text only), drops ad segments by
+    URL match (plus cue/discontinuity markers), rewrites nested playlist URIs
+    back through /proxy and segment URIs to absolute CDN URLs, and returns the
+    clean playlist. Media bytes are fetched by the player straight from the CDN
+    and never transit this server.
 
     Config:
-      open_proxy      — if False, returns 404.
-      proxy_segments  — if True, segment URIs are rewritten to /proxy/segment?url=...
-                        instead of being left as absolute CDN URLs.
+      open_proxy — if False, returns 404.
     """
     if not config.open_proxy:
         return jsonify({"error": "proxy disabled"}), 404
@@ -347,50 +347,8 @@ def proxy_playlist():
     # client used (works transparently behind nginx / any path prefix).
     proxy_base = request.path  # e.g. "/proxy"
 
-    segment_proxy_base = "/proxy/segment" if config.proxy_segments else None
-
-    text, _kind = filter_playlist(content, base_url, proxy_base, _ad_filter, segment_proxy_base)
+    text, _kind = filter_playlist(content, base_url, proxy_base, _ad_filter)
     return Response(text, content_type="application/vnd.apple.mpegurl; charset=utf-8")
-
-
-@app.route("/proxy/segment")
-def proxy_segment():
-    """
-    GET /proxy/segment?url=<urlencoded segment URL>
-
-    Pass-through streaming proxy for individual HLS media segments.
-    Only meaningful when proxy_segments is enabled, but the route is always
-    registered so requests are handled gracefully in all configurations.
-    """
-    url = request.args.get("url", "").strip()
-    if not url:
-        return jsonify({"error": "url parameter required"}), 400
-
-    proxy = config.http_proxy or None
-    proxies = {"http": proxy, "https": proxy} if proxy else None
-
-    try:
-        upstream = _requests.get(
-            url,
-            headers=_default_headers,
-            proxies=proxies,
-            stream=True,
-            timeout=30,
-        )
-        content_type = upstream.headers.get("Content-Type", "video/MP2T")
-
-        def _generate():
-            for chunk in upstream.iter_content(chunk_size=8192):
-                if chunk:
-                    yield chunk
-
-        return Response(
-            _generate(),
-            status=upstream.status_code,
-            content_type=content_type,
-        )
-    except Exception:
-        return jsonify({"error": "upstream segment fetch failed"}), 502
 
 
 def _read_result_file(path):

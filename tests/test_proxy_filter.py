@@ -31,7 +31,6 @@ from service.proxy import (
 
 BASE = "http://cdn.example.com/live/"
 PROXY = "/proxy"
-SEG_PROXY = "/proxy/segment"
 
 
 def make_master(variants, media_tags=None, iframe_tags=None):
@@ -282,14 +281,6 @@ def test_media_uri_rewritten_to_absolute():
     assert abs_uri in result
     # Relative form should NOT appear as a bare segment line
     assert "\nseg0.ts\n" not in result
-
-
-def test_media_segment_proxy_base_rewrites():
-    content = make_media(["seg0.ts"])
-    result = filter_media_playlist(content, BASE, no_filter(), segment_proxy_base=SEG_PROXY)
-    abs_uri = resolve_uri(BASE, "seg0.ts")
-    expected = build_proxy_url(SEG_PROXY, abs_uri)
-    assert expected in result
 
 
 # ---------------------------------------------------------------------------
@@ -744,13 +735,14 @@ def test_master_trailing_newline_preserved():
     assert result.endswith("\n")
 
 
-def test_media_segment_proxy_base_none_gives_absolute():
-    """With segment_proxy_base=None, segment URIs become absolute, not proxied."""
+def test_media_segments_always_absolute():
+    """Segment URIs are always rewritten to absolute CDN URLs (never proxied);
+    media bytes go straight to the CDN and never transit the server."""
     content = make_media(["seg0.ts"])
-    result = filter_media_playlist(content, BASE, no_filter(), segment_proxy_base=None)
+    result = filter_media_playlist(content, BASE, no_filter())
     abs_uri = resolve_uri(BASE, "seg0.ts")
     assert abs_uri in result
-    assert SEG_PROXY not in result
+    assert "/proxy" not in result
 
 
 def test_media_program_date_time_preserved():
@@ -832,7 +824,6 @@ _ALL_TESTS = [
     test_master_relative_uri_resolution,
     test_media_no_filter_keeps_all_segments,
     test_media_uri_rewritten_to_absolute,
-    test_media_segment_proxy_base_rewrites,
     test_media_keyword_drop,
     test_media_regex_drop,
     test_media_keyword_drop_relative_uri_resolved,
@@ -864,7 +855,7 @@ _ALL_TESTS = [
     test_media_all_segments_dropped_returns_valid_playlist,
     test_media_multiple_cue_breaks,
     test_master_trailing_newline_preserved,
-    test_media_segment_proxy_base_none_gives_absolute,
+    test_media_segments_always_absolute,
     test_media_program_date_time_preserved,
     test_media_absolute_segment_uri_not_double_resolved,
     test_media_trailing_discontinuity_not_dropped,

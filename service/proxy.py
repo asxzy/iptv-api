@@ -242,11 +242,14 @@ def filter_media_playlist(
     content: str,
     base_url: str,
     ad_filter: AdFilter,
-    segment_proxy_base: str = None,
 ) -> str:
     """
     Walk the media playlist line-by-line, dropping ad segments and rewriting
-    kept segment URIs to absolute (or through segment_proxy_base if given).
+    kept segment URIs to absolute CDN URLs.
+
+    Segments are always emitted as absolute URLs so the player fetches media
+    bytes straight from the CDN — they never transit this server. The server
+    only ever reads the (tiny) playlist text; blocking is purely URL-based.
 
     Ad detection:
     - Cue ad break: between #EXT-X-CUE-OUT and #EXT-X-CUE-IN (when drop_cue_ads).
@@ -286,15 +289,11 @@ def filter_media_playlist(
                 out.extend(emit_lines)
 
     def _resolve_and_rewrite(uri_line: str) -> str:
-        """Return the rewritten segment URI line (absolute or proxied)."""
+        """Return the segment URI line resolved to an absolute CDN URL."""
         raw_uri = uri_line.rstrip("\r\n")
         abs_url = resolve_uri(base_url, raw_uri)
-        if segment_proxy_base:
-            new_uri = build_proxy_url(segment_proxy_base, abs_url)
-        else:
-            new_uri = abs_url
         ending = uri_line[len(raw_uri):]
-        return new_uri + ending
+        return abs_url + ending
 
     for line in lines:
         stripped = line.rstrip("\r\n")
@@ -372,12 +371,8 @@ def filter_media_playlist(
                 seg_tag_lines = discont_block_pending + pending
                 discont_block_pending = []
                 pending = []
-                if segment_proxy_base:
-                    new_uri = build_proxy_url(segment_proxy_base, abs_uri)
-                else:
-                    new_uri = abs_uri
                 ending = line[len(stripped):]
-                uri_out_line = new_uri + ending
+                uri_out_line = abs_uri + ending
                 segment_emit = seg_tag_lines + [uri_out_line]
 
             discont_block.append((segment_emit, abs_uri))
@@ -489,7 +484,6 @@ def filter_playlist(
     base_url: str,
     proxy_base: str,
     ad_filter: AdFilter,
-    segment_proxy_base: str = None,
 ) -> tuple:
     """
     Detect and dispatch to the appropriate filter.
@@ -502,5 +496,5 @@ def filter_playlist(
     if is_master_playlist(content):
         return filter_master_playlist(content, base_url, proxy_base), "master"
     if is_media_playlist(content):
-        return filter_media_playlist(content, base_url, ad_filter, segment_proxy_base), "media"
+        return filter_media_playlist(content, base_url, ad_filter), "media"
     return content, "passthrough"
