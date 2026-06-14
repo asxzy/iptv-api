@@ -7,3 +7,4 @@ no_signal
 3y1.xyz
 iptv.catvod.com
 backup
+applife
