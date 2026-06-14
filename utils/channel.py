@@ -21,6 +21,7 @@ from utils.ffmpeg import check_ffmpeg_installed_status
 from utils.frozen import is_url_frozen, mark_url_bad, mark_url_good
 from utils.i18n import t
 from utils.ip_checker import IPChecker
+from utils.processing_status import status
 from utils.speed import (
     get_speed,
     get_speed_result,
@@ -762,6 +763,8 @@ async def test_speed(data, ipv6=False, callback=None, on_task_complete=None):
     completed_by_channel = defaultdict(int)
     urls_limit = config.urls_limit
     valid_count_by_channel = defaultdict(int)
+    _status_log_counter = 0
+    _status_log_threshold = max(1, total_tasks // 50)
 
     def _cancel_remaining_channel_tasks(cate, name):
         for task, meta in list(channel_map.items()):
@@ -775,7 +778,7 @@ async def test_speed(data, ipv6=False, callback=None, on_task_complete=None):
                     pass
 
     def _on_task_done(task):
-        nonlocal completed
+        nonlocal completed, _status_log_counter
         try:
             if task.cancelled():
                 result = {}
@@ -828,6 +831,23 @@ async def test_speed(data, ipv6=False, callback=None, on_task_complete=None):
 
         completed += 1
         completed_by_channel[(cate, name)] += 1
+
+        _status_log_counter += 1
+        if _status_log_counter >= _status_log_threshold or completed == 1 or completed == total_tasks:
+            _status_log_counter = 0
+            pct = int((completed / total_tasks) * 100) if total_tasks else 0
+            status.set_phase(
+                "speed_testing",
+                progress=pct,
+                completed_items=completed,
+                total_items=total_tasks,
+                tested_urls=completed,
+            )
+            status.set_current_item(category=cate, name=name, url=merged.get("url", ""))
+            logger.debug(
+                "Speed test: %d/%d (%d%%) — current: %s / %s — %s",
+                completed, total_tasks, pct, cate, name, merged.get("url", ""),
+            )
 
         is_channel_last = completed_by_channel[(cate, name)] >= total_tasks_by_channel.get((cate, name), 0)
         is_last = completed >= total_tasks
@@ -993,6 +1013,33 @@ def process_write_content(
     rtmp_type = ["hls"] if hls_url else []
     open_url_info = config.open_url_info
     unmatch_category = t("content.unmatch_channel")
+
+    # Inject a real-time progress line at the top of the file while the update
+    # pipeline is still running.  Clients that fetch the result during processing
+    # can see the current phase, percentage and item being tested.
+    if not is_last:
+        try:
+            from utils.processing_status import status as _pstatus
+            _st = _pstatus.get()
+            if _st.get("is_processing"):
+                _phase_label = t(
+                    f"progress.{_st['phase']}",
+                    default=_st["phase"],
+                )
+                _pct = _st.get("progress", 0)
+                _tested = _st.get("tested_urls", 0)
+                _total_urls = _st.get("total_urls", 0)
+                _name = _st.get("current_name", "")
+                _url = _st.get("current_url", "")
+                _parts = [f"⏳{_phase_label} {_pct}%"]
+                if _total_urls:
+                    _parts.append(f"({_tested}/{_total_urls})")
+                if _name:
+                    _parts.append(f"| {_name}")
+                _progress_text = " ".join(_parts)
+                content += f"{_progress_text},{_url or t('msg.waiting_tip')}\n"
+        except Exception:
+            pass
     for cate, channel_obj in data.items():
         content += f"{'\n\n' if not first_cate else ''}{cate},#genre#"
         first_cate = False
