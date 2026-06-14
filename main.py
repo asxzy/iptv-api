@@ -474,7 +474,14 @@ class UpdateSource:
         def default_callback(*args, **kwargs):
             pass
 
-        self.update_progress = callback or default_callback
+        _orig = callback or default_callback
+
+        def _progress_cb(*args, **kwargs):
+            if args and isinstance(args[1], int):
+                status.set_progress(args[1])
+            _orig(*args, **kwargs)
+
+        self.update_progress = _progress_cb
         self.run_ui = True if callback else False
 
         if not config.open_update:

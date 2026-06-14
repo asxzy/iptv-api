@@ -601,12 +601,10 @@ def get_result_file_content(path=None, show_content=False, file_type=None, merge
         if merge_source:
             content = merge_txt_multi_source(content)
     else:
-        # When the result file doesn't exist yet, show processing status
-        # instead of a static "please wait" message.
         try:
-            from utils.processing_status import status as _pst
+            from utils.processing_status import read_status_file
             from utils.i18n import t as _t
-            _st = _pst.get()
+            _st = read_status_file() or {"is_processing": False}
             if _st.get("is_processing"):
                 _line_parts = []
                 _phase_label = _t(

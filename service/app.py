@@ -16,7 +16,7 @@ from werkzeug.utils import secure_filename
 import mimetypes
 from utils.requests.tools import get_redirect_chain_content
 from service.proxy import load_ad_filters, filter_playlist, rewrite_list_to_proxy
-from utils.processing_status import status
+from utils.processing_status import status, read_status_file
 
 # Module-level cached AdFilter — loaded once at import time for performance.
 # Reload the process to pick up changes to proxy_ad_filter.txt / blacklist.txt.
@@ -282,7 +282,9 @@ def show_unmatch_log():
 @app.route("/update-status")
 def show_status():
     _log_request()
-    st = status.get()
+    # Read from the cross-process file so we see the real pipeline state.
+    # Fall back to the in-process singleton (which is always idle here).
+    st = read_status_file() or status.get()
     return jsonify(st)
 
 
