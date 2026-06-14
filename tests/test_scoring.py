@@ -148,3 +148,12 @@ def test_compute_score_returns_unit_range():
                       "fps": 30, "video_codec": "h264", "delay": 400,
                       "speed": 4.0}, DEFAULT_WEIGHTS)
     assert 0.0 <= s <= 1.0
+
+
+def test_config_ranking_weights_has_all_keys():
+    from utils.config import config
+    from utils.scoring import DEFAULT_WEIGHTS
+    w = config.ranking_weights
+    assert set(w.keys()) == set(DEFAULT_WEIGHTS.keys())
+    for k in DEFAULT_WEIGHTS:
+        assert isinstance(w[k], float)
