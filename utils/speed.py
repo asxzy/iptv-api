@@ -203,28 +203,44 @@ async def get_result(url: str, headers: dict = None, resolution: str = None,
                     m3u8_obj = m3u8.loads(url_content)
                     playlists = m3u8_obj.playlists
                     segments = m3u8_obj.segments
+                    segment_pairs = []
                     if playlists:
                         best_playlist = max(m3u8_obj.playlists, key=lambda p: p.stream_info.bandwidth)
                         playlist_url = urljoin(url, best_playlist.uri)
                         playlist_content = await get_url_content(playlist_url, headers, session, timeout)
                         if playlist_content:
                             media_playlist = m3u8.loads(playlist_content)
-                            segment_urls = [urljoin(playlist_url, segment.uri) for segment in media_playlist.segments]
+                            segment_pairs = [
+                                (urljoin(playlist_url, segment.uri), segment.duration)
+                                for segment in media_playlist.segments
+                            ]
                     else:
-                        segment_urls = [urljoin(url, segment.uri) for segment in segments]
-                    if not segment_urls:
+                        segment_pairs = [
+                            (urljoin(url, segment.uri), segment.duration) for segment in segments
+                        ]
+                    if not segment_pairs:
                         raise Exception("Segment urls not found")
                 else:
                     res_info = await get_speed_with_download(url, headers, session, timeout)
                     info.update({'speed': res_info['speed'], 'delay': res_info['delay']})
                 start_time = time()
-                sampled_segment_urls = sample_segment_urls(segment_urls, speed_test_limit)
-                tasks = [get_speed_with_download(ts_url, headers, session, timeout) for ts_url in sampled_segment_urls]
+                sampled_pairs = sample_segment_urls(segment_pairs, speed_test_limit)
+                tasks = [get_speed_with_download(ts_url, headers, session, timeout)
+                         for ts_url, _ in sampled_pairs]
                 results = await asyncio.gather(*tasks, return_exceptions=True)
                 total_size = sum(result['size'] for result in results if isinstance(result, dict))
                 total_time = sum(result['time'] for result in results if isinstance(result, dict))
                 info['speed'] = total_size / total_time / 1024 / 1024 if total_time > 0 else 0
                 info['delay'] = int(round((time() - start_time) * 1000))
+                seg_bytes = 0
+                seg_duration = 0.0
+                for (_, seg_dur), seg_res in zip(sampled_pairs, results):
+                    if isinstance(seg_res, dict) and seg_res.get('size'):
+                        seg_bytes += seg_res['size']
+                        if seg_dur:
+                            seg_duration += seg_dur
+                if seg_bytes > 0 and seg_duration > 0:
+                    info['bitrate'] = seg_bytes * 8 / seg_duration
                 try:
                     if round(info['speed'], 2) == 0 and info['delay'] != -1:
                         ff_out = await ffmpeg_url(url, headers, timeout)
@@ -436,11 +452,19 @@ def sample_segment_urls(segment_urls: list, limit: int) -> list:
 
 
 def get_avg_result(result) -> TestResult:
+    bitrates = [item.get("bitrate") for item in result if item.get("bitrate")]
+    fps_values = [item.get("fps") for item in result if item.get("fps")]
+    video_codec = next((item.get("video_codec") for item in result if item.get("video_codec")), None)
+    audio_codec = next((item.get("audio_codec") for item in result if item.get("audio_codec")), None)
     return {
         'speed': sum(item['speed'] or 0 for item in result) / len(result),
         'delay': max(
             int(sum(item['delay'] or -1 for item in result) / len(result)), -1),
-        'resolution': max((item['resolution'] for item in result), key=get_resolution_value)
+        'resolution': max((item['resolution'] for item in result), key=get_resolution_value),
+        'bitrate': (sum(bitrates) / len(bitrates)) if bitrates else None,
+        'fps': max(fps_values) if fps_values else None,
+        'video_codec': video_codec,
+        'audio_codec': audio_codec,
     }
 
 

@@ -199,3 +199,18 @@ def test_get_sort_result_speed_breaks_ties():
     b = {"url": "b", "ipv_type": "ipv4", "delay": 500, "speed": 9.0}
     out = get_sort_result([a, b], filter_speed=False, filter_resolution=False)
     assert [r["url"] for r in out] == ["b", "a"]
+
+
+def test_get_avg_result_aggregates_bitrate_and_fps():
+    from utils.speed import get_avg_result
+    avg = get_avg_result([
+        {"speed": 4.0, "delay": 100, "resolution": "1280x720",
+         "bitrate": 2_000_000, "fps": 25, "video_codec": "h264", "audio_codec": "aac"},
+        {"speed": 6.0, "delay": 200, "resolution": "1920x1080",
+         "bitrate": 4_000_000, "fps": 50, "video_codec": None, "audio_codec": None},
+    ])
+    assert avg["resolution"] == "1920x1080"     # max resolution
+    assert abs(avg["bitrate"] - 3_000_000) < 1  # mean of present bitrates
+    assert avg["fps"] == 50                      # max fps
+    assert avg["video_codec"] == "h264"          # first present
+    assert avg["audio_codec"] == "aac"
