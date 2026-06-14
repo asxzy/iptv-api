@@ -29,3 +29,25 @@ def resolution_score(resolution):
         if px >= threshold:
             return score
     return 0.15
+
+
+_FPS_NEUTRAL = 0.6
+
+
+def fps_score(fps):
+    """Map fps to a 0-1 score; unknown/invalid -> _FPS_NEUTRAL."""
+    if fps is None:
+        return _FPS_NEUTRAL
+    try:
+        f = float(fps)
+    except (TypeError, ValueError):
+        return _FPS_NEUTRAL
+    if f <= 0:
+        return _FPS_NEUTRAL
+    if f >= 50:
+        return 1.0
+    if f >= 29:
+        return 0.7
+    if f >= 24:
+        return 0.55
+    return 0.4
