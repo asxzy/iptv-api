@@ -30,6 +30,10 @@ opencc_t2s = OpenCC("t2s")
 _channel_alias_instance = None
 
 
+_LOG_FORMAT = "%(asctime)s [%(levelname)s] [%(name)s] %(message)s"
+_LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+
 def get_logger(path, level=None, init=False):
     """
     get the logger
@@ -69,6 +73,7 @@ def get_logger(path, level=None, init=False):
 
     handler = RotatingFileHandler(path, encoding="utf-8", delay=True)
     handler.setLevel(level)
+    handler.setFormatter(logging.Formatter(_LOG_FORMAT, datefmt=_LOG_DATE_FORMAT))
 
     abs_path = os.path.abspath(path)
     if not any(
@@ -83,16 +88,34 @@ def get_logger(path, level=None, init=False):
             stream_handler = logging.StreamHandler(sys.stdout)
             stream_handler.setLevel(console_level)
             if console_level <= logging.INFO:
-                formatter = logging.Formatter(
-                    "%(asctime)s [%(levelname)s] %(message)s",
-                    datefmt="%H:%M:%S",
-                )
-                stream_handler.setFormatter(formatter)
+                stream_handler.setFormatter(logging.Formatter(
+                    _LOG_FORMAT, datefmt=_LOG_DATE_FORMAT,
+                ))
             logger.addHandler(stream_handler)
         except Exception:
             pass
 
     logger.setLevel(effective_level)
+
+    if init and not logging.getLogger().hasHandlers():
+        try:
+            _root = logging.getLogger()
+            _root.setLevel(effective_level)
+            _root_handler = logging.StreamHandler(sys.stdout)
+            _root_handler.setLevel(console_level)
+            if console_level <= logging.INFO:
+                _root_handler.setFormatter(logging.Formatter(
+                    _LOG_FORMAT, datefmt=_LOG_DATE_FORMAT,
+                ))
+            _root.addHandler(_root_handler)
+        except Exception:
+            pass
+
+        # Suppress noisy third-party loggers that flood DEBUG-level output
+        for _noisy in ("urllib3", "urllib3.connectionpool",
+                       "chardet", "charset_normalizer"):
+            logging.getLogger(_noisy).setLevel(logging.WARNING)
+
     return logger
 
 
