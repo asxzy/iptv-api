@@ -122,5 +122,13 @@
   "content.no_result_channel": "\uD83C\uDE33No result channel",
   "content.update_time": "\uD83D\uDD58\uFE0FUpdate time",
   "content.update_running": "\uD83D\uDD58\uFE0F Update in progress, refresh to get the latest results",
-  "content.unmatch_channel": "♻\uFE0FNo match channel"
+  "content.unmatch_channel": "♻\uFE0FNo match channel",
+  "progress.preparing": "Preparing",
+  "progress.fetching_subscribe": "Fetching subscribe",
+  "progress.fetching_epg": "Fetching EPG",
+  "progress.merging": "Merging",
+  "progress.blacklisting": "Blacklisting",
+  "progress.speed_testing": "Speed testing",
+  "progress.finalizing": "Finalizing",
+  "progress.waiting": "Waiting"
 }
