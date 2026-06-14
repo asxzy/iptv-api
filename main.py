@@ -2,6 +2,7 @@ import asyncio
 import copy
 import datetime
 import gzip
+import logging
 import os
 import pickle
 import sys
@@ -20,6 +21,7 @@ from updates.subscribe import get_channels_by_subscribe_urls
 from updates.subscribe.request import filter_channel_data_nested_blacklist
 from utils.aggregator import ResultAggregator
 from utils.channel import get_channel_items, append_total_data, test_speed, retain_origin
+from utils.processing_status import status
 from utils.requests.tools import get_redirect_chain_content
 from utils.config import config
 from utils.i18n import t
@@ -122,6 +124,8 @@ class UpdateSource:
     # stage 1: prepare
     # ----------------------------
     def _prepare_channel_data(self):
+        logger.info("Phase: preparing channel data…")
+        status.set_phase("preparing")
         self.whitelist_maps = load_whitelist_maps(constants.whitelist_path)
         self.blacklist = get_urls_from_file(constants.blacklist_path, pattern_search=False)
         self.channel_items = get_channel_items(self.whitelist_maps, self.blacklist)
@@ -246,12 +250,17 @@ class UpdateSource:
         Visits subscribe and epg pages concurrently to fetch data.
         """
         channel_names = channel_names or []
+        logger.info("Phase: fetching subscribe/EPG sources (%d channel names)", len(channel_names))
+        status.set_phase("fetching_subscribe")
 
         cors: list[tuple[str, asyncio.Future]] = []
         if config.open_method.get("subscribe"):
             cors.append(("subscribe_result", asyncio.create_task(self._fetch_subscribe(channel_names))))
+            logger.debug("Spawned subscribe fetch task")
         if config.open_method.get("epg"):
             cors.append(("epg_result", asyncio.create_task(self._fetch_epg(channel_names))))
+            status.set_phase("fetching_epg")
+            logger.debug("Spawned EPG fetch task")
 
         if not cors:
             return
@@ -295,6 +304,7 @@ class UpdateSource:
         """
         Run speed test on the channel data and return the test results.
         """
+        logger.info("Phase: speed testing")
         test_data = {
             category: copy.deepcopy(items)
             for category, items in self.channel_data.items()
@@ -311,6 +321,7 @@ class UpdateSource:
         self.total = get_urls_len(test_data)
 
         logger.info(t("msg.total_urls_need_test_speed").format(total=urls_total, speed_total=self.total))
+        status.set_phase("speed_testing", progress=0, total_urls=self.total)
 
         if self.total <= 0:
             self.aggregator.is_last = True
@@ -389,8 +400,10 @@ class UpdateSource:
             self.tasks = []
             self._write_epg_files_if_needed()
 
-            logger.info("Merging channel sources (subscribe / local / history)...")
+            logger.info("Phase: merging channel sources (subscribe / local / history)...")
+            status.set_phase("merging")
             _merge_start = time()
+            total_subscribe = sum(len(urls) for urls in self.subscribe_result.values()) if self.subscribe_result else 0
             append_total_data(
                 self.channel_items.items(),
                 self.channel_data,
@@ -398,12 +411,20 @@ class UpdateSource:
                 self.whitelist_maps,
                 self.blacklist,
             )
-            logger.info("Merged channel sources in %.1fs", time() - _merge_start)
+            _merge_elapsed = time() - _merge_start
+            total_urls = get_urls_len(self.channel_data)
+            logger.info(
+                "Merged %d subscribe urls + template → %d total urls in %.1fs",
+                total_subscribe, total_urls, _merge_elapsed,
+            )
 
             self._filter_nested_blacklist()
+            status.set_phase("blacklisting")
 
             cache = self._load_cache()
             self._filter_history_nested_blacklist(cache)
+            if cache:
+                logger.info("Loaded history cache with %d categories", len(cache))
 
             await self._start_aggregator(cache)
             try:
@@ -416,21 +437,35 @@ class UpdateSource:
                     await self.aggregator.flush_once(force=True)
 
             finally:
+                logger.info("Phase: finalizing (saving cache/frozen state)")
+                status.set_phase("finalizing", progress=95)
                 if config.open_history:
                     self._save_cache(self.aggregator.result)
                     frozen.save(constants.frozen_path)
+                    logger.debug("Cache and frozen state saved")
                 await self._stop_aggregator()
 
+            total_elapsed = time() - main_start_time
             logger.info(
                 t("msg.update_completed").format(
-                    time=format_interval(time() - main_start_time),
+                    time=format_interval(total_elapsed),
                     service_tip="",
                 ),
+            )
+            status.set_complete()
+            logger.info(
+                "Update pipeline finished in %.1fs — total urls tested: %d",
+                total_elapsed,
+                status.get().get("tested_urls", 0),
             )
             self._notify_ui_finished(main_start_time)
 
         except asyncio.exceptions.CancelledError:
             logger.warning(t("msg.update_cancelled"))
+            status.set_error("update cancelled")
+        except Exception:
+            logger.exception("Update pipeline crashed with unhandled exception")
+            status.set_error("unhandled pipeline exception")
 
     # ----------------------------
     # lifecycle control
@@ -451,10 +486,13 @@ class UpdateSource:
             self.update_progress(t("msg.check_ipv6_support"), 0)
 
         self.ipv6_support = config.ipv6_support or check_ipv6_support()
+        logger.debug("IPv6 support: %s", self.ipv6_support)
 
         if not os.getenv("GITHUB_ACTIONS") and (config.update_interval or config.update_times):
+            logger.info("Starting scheduler (interval=%s, times=%s)", config.update_interval, config.update_times)
             await self.scheduler(asyncio.Event())
         elif config.update_startup:
+            logger.info("Starting one-shot update pipeline")
             await self.main()
 
     def stop(self):
@@ -478,10 +516,13 @@ class UpdateSource:
         try:
             self.now = datetime.datetime.now(tz)
             if config.update_startup:
+                logger.info("Running initial update on startup")
+                status.reset()
                 await self.main()
 
             while not stop_event.is_set():
                 self.now = datetime.datetime.now(tz)
+                logger.debug("Scheduler tick at %s", self.now.strftime("%Y-%m-%d %H:%M:%S"))
 
                 if mode == "time" and update_times:
                     candidates = []
@@ -494,6 +535,7 @@ class UpdateSource:
                     next_time = min(candidates)
                     wait_seconds = (next_time - self.now).total_seconds()
                     logger.info(t("msg.schedule_update_time").format(time=next_time.strftime("%Y-%m-%d %H:%M:%S")))
+                    logger.debug("Sleeping %.0f seconds until next scheduled update", wait_seconds)
 
                     try:
                         await asyncio.wait_for(stop_event.wait(), timeout=wait_seconds)
@@ -501,15 +543,20 @@ class UpdateSource:
                             break
                     except asyncio.TimeoutError:
                         self.now = datetime.datetime.now(tz)
+                        logger.info("Scheduled time reached — starting update")
+                        status.reset()
                         await self.main()
                 else:
                     next_time = self.now + datetime.timedelta(hours=config.update_interval)
                     logger.info(t("msg.schedule_update_time").format(time=next_time.strftime("%Y-%m-%d %H:%M:%S")))
+                    logger.debug("Sleeping %.1f hours until next interval update", config.update_interval)
 
                     try:
                         await asyncio.wait_for(stop_event.wait(), timeout=config.update_interval * 3600)
                     except asyncio.TimeoutError:
                         self.now = datetime.datetime.now(tz)
+                        logger.info("Interval reached — starting update")
+                        status.reset()
                         await self.main()
 
         except asyncio.CancelledError:
@@ -518,7 +565,11 @@ class UpdateSource:
 
 if __name__ == "__main__":
     info = get_version_info()
-    logger.info(t("msg.version_info").format(name=info["name"], version=info["version"], build_time=info["build_time"]))
+    logger.info(
+        t("msg.version_info").format(name=info["name"], version=info["version"], build_time=info["build_time"]),
+    )
+    logger.debug("Config: log_level=%s, open_update=%s, open_speed_test=%s, open_service=%s",
+                 logging.getLevelName(config.log_level), config.open_update, config.open_speed_test, config.open_service)
     if not config.open_update:
         logger.warning(t("msg.update_disabled"))
     else:

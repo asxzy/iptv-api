@@ -1,13 +1,17 @@
 import asyncio
 import copy
+import logging
 from collections import defaultdict
 from logging import INFO
+from time import time
 from typing import Any, Dict, Optional, Set, Tuple, Callable, cast
 
 import utils.constants as constants
 from utils.channel import sort_channel_result, generate_channel_statistic, write_channel_to_file, retain_origin
 from utils.config import config
 from utils.tools import get_logger, close_logger_handlers
+
+_aggregator_logger = logging.getLogger("aggregator")
 
 
 class ResultAggregator:
@@ -85,6 +89,11 @@ class ResultAggregator:
             try:
                 self._finished_channels.add((cate, name))
                 generate_channel_statistic(self.stat_logger, cate, name, self.test_results[cate][name])
+                if _aggregator_logger.isEnabledFor(logging.DEBUG):
+                    _aggregator_logger.debug(
+                        "Channel done: %s / %s — %d results", cate, name,
+                        len(self.test_results[cate][name]),
+                    )
             except Exception:
                 pass
 
@@ -218,6 +227,7 @@ class ResultAggregator:
         """
         Flush the current test results to file once.
         """
+        _flush_start = time()
         async with self._lock:
             if not self._dirty and not force:
                 return
@@ -229,6 +239,10 @@ class ResultAggregator:
                 test_copy = copy.deepcopy(self.test_results)
                 finished_for_flush = set(self._finished_channels)
                 self._finished_channels.clear()
+                _aggregator_logger.debug(
+                    "Flush (force) — %d categories, %d finished channels",
+                    len(test_copy), len(finished_for_flush),
+                )
             else:
                 test_copy = defaultdict(lambda: defaultdict(list))
                 for cate, name in pending:
@@ -239,6 +253,10 @@ class ResultAggregator:
 
                 finished_for_flush = set(self._finished_channels & pending)
                 self._finished_channels.difference_update(finished_for_flush)
+                _aggregator_logger.debug(
+                    "Flush (incremental) — %d pending channels, %d finished",
+                    len(pending), len(finished_for_flush),
+                )
 
             self._dirty = False
             self._dirty_count = 0
@@ -247,7 +265,11 @@ class ResultAggregator:
         try:
             await self._atomic_write_sorted_view(test_copy, affected=affected, finished=finished_for_flush)
         except Exception:
-            pass
+            _aggregator_logger.exception("Flush write failed")
+        else:
+            _elapsed = time() - _flush_start
+            if _elapsed > 1.0:
+                _aggregator_logger.debug("Flush completed in %.2fs", _elapsed)
 
     async def _run_loop(self):
         """
