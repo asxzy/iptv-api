@@ -1,4 +1,5 @@
 import asyncio
+import os
 import http.cookies
 import re
 from time import time
@@ -29,6 +30,7 @@ min_speed_value = config.min_speed
 resolution_speed_map = config.resolution_speed_map
 speed_test_limit = config.speed_test_limit
 ranking_weights = config.ranking_weights
+full_probe = config.open_full_probe or os.path.exists(constants.cache_path)
 m3u8_headers = ['application/x-mpegurl', 'application/vnd.apple.mpegurl', 'audio/mpegurl', 'audio/x-mpegurl']
 default_ipv6_delay = 0.1
 default_ipv6_resolution = "1920x1080"
@@ -271,14 +273,27 @@ async def get_result(url: str, headers: dict = None, resolution: str = None,
     except:
         pass
     finally:
-        if filter_resolution and not location and not info.get('resolution') and info.get('delay') != -1:
+        need_probe = (
+            not location and info.get('delay') != -1 and (
+                (filter_resolution and not info.get('resolution'))
+                or (full_probe and (not info.get('fps') or not info.get('video_codec')
+                                    or not info.get('bitrate')))
+            )
+        )
+        if need_probe:
             try:
                 probed = await probe_url(url, headers, timeout=timeout)
                 if probed:
-                    info['resolution'] = probed.get('resolution')
-                    info['fps'] = probed.get('fps')
-                    info['video_codec'] = probed.get('video_codec')
-                    info['audio_codec'] = probed.get('audio_codec')
+                    if not info.get('resolution'):
+                        info['resolution'] = probed.get('resolution')
+                    if not info.get('fps'):
+                        info['fps'] = probed.get('fps')
+                    if not info.get('video_codec'):
+                        info['video_codec'] = probed.get('video_codec')
+                    if not info.get('audio_codec'):
+                        info['audio_codec'] = probed.get('audio_codec')
+                    if not info.get('bitrate') and probed.get('bitrate'):
+                        info['bitrate'] = probed.get('bitrate')
             except Exception:
                 pass
         return info

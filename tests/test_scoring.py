@@ -214,3 +214,17 @@ def test_get_avg_result_aggregates_bitrate_and_fps():
     assert avg["fps"] == 50                      # max fps
     assert avg["video_codec"] == "h264"          # first present
     assert avg["audio_codec"] == "aac"
+
+
+def test_parse_probe_data_extracts_bitrate():
+    from utils.ffmpeg.probe import _parse_probe_data
+    meta = _parse_probe_data({
+        "streams": [
+            {"codec_type": "video", "codec_name": "h264", "width": 1920,
+             "height": 1080, "avg_frame_rate": "25/1"},
+            {"codec_type": "audio", "codec_name": "aac"},
+        ],
+        "format": {"bit_rate": "5000000"},
+    })
+    assert meta["resolution"] == "1920x1080"
+    assert meta["bitrate"] == 5000000.0
