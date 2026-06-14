@@ -601,7 +601,33 @@ def get_result_file_content(path=None, show_content=False, file_type=None, merge
         if merge_source:
             content = merge_txt_multi_source(content)
     else:
-        content = constants.waiting_tip
+        # When the result file doesn't exist yet, show processing status
+        # instead of a static "please wait" message.
+        try:
+            from utils.processing_status import status as _pst
+            from utils.i18n import t as _t
+            _st = _pst.get()
+            if _st.get("is_processing"):
+                _line_parts = []
+                _phase_label = _t(
+                    f"progress.{_st['phase']}",
+                    default=_st["phase"],
+                )
+                _pct = _st.get("progress", 0)
+                _tested = _st.get("tested_urls", 0)
+                _total_urls = _st.get("total_urls", 0)
+                _url = _st.get("current_url", "")
+                _name = _st.get("current_name", "")
+                _line_parts.append(f"⏳{_phase_label} {_pct}%")
+                if _total_urls:
+                    _line_parts.append(f"({_tested}/{_total_urls})")
+                if _name:
+                    _line_parts.append(f"| {_name}")
+                content = f"{_t('content.update_running')},#genre#\n{' '.join(_line_parts)},{_url}\n"
+            else:
+                content = constants.waiting_tip
+        except Exception:
+            content = constants.waiting_tip
     response = make_response(content)
     response.mimetype = 'text/plain'
     return response
