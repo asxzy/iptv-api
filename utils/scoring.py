@@ -109,3 +109,51 @@ def quality_score(result, weights=DEFAULT_WEIGHTS):
     es = encoding_adequacy(resolution, bitrate, fps, codec, weights)
     fs = fps_score(fps)
     return weights["w_res"] * rs + weights["w_enc"] * es + weights["w_fps"] * fs
+
+
+def _speed_mbps(result):
+    speed = result.get("speed") or 0
+    if speed == float("inf"):
+        return float("inf")
+    return speed * 8.0  # MB/s -> Mbps
+
+
+def margin_score(result, weights=DEFAULT_WEIGHTS):
+    """
+    Throughput-over-bitrate headroom, 0-1. Saturates at margin_target,
+    floors at margin 1 (cannot sustain). Bitrate unknown -> bounded raw
+    throughput so faster still wins.
+    """
+    speed_mbps = _speed_mbps(result)
+    if speed_mbps == float("inf"):
+        return 1.0
+    bitrate_mbps = (result.get("bitrate") or 0) / 1_000_000.0
+    if bitrate_mbps <= 0:
+        return min(1.0, speed_mbps / weights["ref_throughput_mbps"])
+    margin = speed_mbps / bitrate_mbps
+    target = weights["margin_target"]
+    if target <= 1:
+        return 1.0 if margin >= 1 else 0.0
+    return max(0.0, min(1.0, (margin - 1.0) / (target - 1.0)))
+
+
+def loadability_score(result, weights=DEFAULT_WEIGHTS):
+    """Blend startup (delay) and sustain (margin) into a 0-1 loadability score."""
+    delay = result.get("delay")
+    if delay is None or delay < 0:
+        startup = NEUTRAL
+    else:
+        startup = max(0.0, 1.0 - delay / weights["delay_max"])
+    margin = margin_score(result, weights)
+    return weights["w_start"] * startup + weights["w_margin"] * margin
+
+
+def is_sustainable(result, weights=DEFAULT_WEIGHTS):
+    """True if throughput can keep up with bitrate (or bitrate unknown)."""
+    speed_mbps = _speed_mbps(result)
+    if speed_mbps == float("inf"):
+        return True
+    bitrate_mbps = (result.get("bitrate") or 0) / 1_000_000.0
+    if bitrate_mbps <= 0:
+        return True
+    return speed_mbps >= bitrate_mbps

@@ -85,3 +85,41 @@ def test_quality_score_fake_1080p_loses_to_honest_720p():
     honest_720 = quality_score({"resolution": "1280x720", "bitrate": 4_000_000,
                                "fps": 25, "video_codec": "h264"}, DEFAULT_WEIGHTS)
     assert honest_720 > fake_1080
+
+
+def test_margin_score_saturates_and_floors():
+    from utils.scoring import margin_score, DEFAULT_WEIGHTS
+    # bitrate 8 Mbps -> 1 MB/s. margin_target 2.0.
+    # speed 2 MB/s == 16 Mbps -> margin 2.0 -> saturates to 1.0
+    assert margin_score({"speed": 2.0, "bitrate": 8_000_000}, DEFAULT_WEIGHTS) == 1.0
+    # speed 1 MB/s == 8 Mbps -> margin 1.0 -> floor 0.0
+    assert margin_score({"speed": 1.0, "bitrate": 8_000_000}, DEFAULT_WEIGHTS) == 0.0
+    # midpoint margin 1.5 -> 0.5
+    assert abs(margin_score({"speed": 1.5, "bitrate": 8_000_000}, DEFAULT_WEIGHTS) - 0.5) < 1e-6
+
+
+def test_margin_score_bitrate_unknown_uses_throughput():
+    from utils.scoring import margin_score, DEFAULT_WEIGHTS
+    # no bitrate: rank by raw throughput, ref 10 Mbps. 0.625 MB/s == 5 Mbps -> 0.5
+    assert abs(margin_score({"speed": 0.625}, DEFAULT_WEIGHTS) - 0.5) < 1e-6
+    # infinite speed (ipv6 default) -> 1.0
+    assert margin_score({"speed": float("inf")}, DEFAULT_WEIGHTS) == 1.0
+
+
+def test_loadability_startup_and_neutral():
+    from utils.scoring import loadability_score, DEFAULT_WEIGHTS, NEUTRAL
+    # delay missing/-1 -> startup NEUTRAL; bitrate unknown, speed 0 -> margin 0
+    val = loadability_score({"delay": -1, "speed": 0}, DEFAULT_WEIGHTS)
+    assert abs(val - (0.3 * NEUTRAL + 0.7 * 0.0)) < 1e-6
+    # lower delay scores higher (all else equal)
+    fast = loadability_score({"delay": 300, "speed": 1.25}, DEFAULT_WEIGHTS)
+    slow = loadability_score({"delay": 2700, "speed": 1.25}, DEFAULT_WEIGHTS)
+    assert fast > slow
+
+
+def test_is_sustainable_gate():
+    from utils.scoring import is_sustainable, DEFAULT_WEIGHTS
+    assert is_sustainable({"speed": 1.0, "bitrate": 4_000_000}, DEFAULT_WEIGHTS) is True   # 8>=4 Mbps
+    assert is_sustainable({"speed": 0.25, "bitrate": 8_000_000}, DEFAULT_WEIGHTS) is False  # 2<8 Mbps
+    assert is_sustainable({"speed": 0.1}, DEFAULT_WEIGHTS) is True  # bitrate unknown -> don't gate
+    assert is_sustainable({"speed": float("inf"), "bitrate": 8_000_000}, DEFAULT_WEIGHTS) is True
