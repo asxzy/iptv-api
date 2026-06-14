@@ -157,3 +157,10 @@ def is_sustainable(result, weights=DEFAULT_WEIGHTS):
     if bitrate_mbps <= 0:
         return True
     return speed_mbps >= bitrate_mbps
+
+
+def compute_score(result, weights=DEFAULT_WEIGHTS):
+    """Final 0-1 ranking score: weighted blend of quality and loadability."""
+    q = quality_score(result, weights)
+    l = loadability_score(result, weights)
+    return weights["w_quality"] * q + weights["w_loadability"] * l

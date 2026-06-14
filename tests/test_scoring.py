@@ -123,3 +123,28 @@ def test_is_sustainable_gate():
     assert is_sustainable({"speed": 0.25, "bitrate": 8_000_000}, DEFAULT_WEIGHTS) is False  # 2<8 Mbps
     assert is_sustainable({"speed": 0.1}, DEFAULT_WEIGHTS) is True  # bitrate unknown -> don't gate
     assert is_sustainable({"speed": float("inf"), "bitrate": 8_000_000}, DEFAULT_WEIGHTS) is True
+
+
+def test_compute_score_higher_bitrate_wins_at_equal_resolution():
+    from utils.scoring import compute_score, DEFAULT_WEIGHTS
+    base = {"resolution": "1920x1080", "fps": 25, "video_codec": "h264",
+            "delay": 500, "speed": 5.0}
+    rich = compute_score({**base, "bitrate": 6_000_000}, DEFAULT_WEIGHTS)
+    poor = compute_score({**base, "bitrate": 1_500_000}, DEFAULT_WEIGHTS)
+    assert rich > poor
+
+
+def test_compute_score_all_missing_signals_ranks_by_speed():
+    from utils.scoring import compute_score, DEFAULT_WEIGHTS
+    # only speed differs; resolution/bitrate/fps/codec absent, delay equal
+    fast = compute_score({"delay": 500, "speed": 3.0}, DEFAULT_WEIGHTS)
+    slow = compute_score({"delay": 500, "speed": 1.0}, DEFAULT_WEIGHTS)
+    assert fast > slow
+
+
+def test_compute_score_returns_unit_range():
+    from utils.scoring import compute_score, DEFAULT_WEIGHTS
+    s = compute_score({"resolution": "1920x1080", "bitrate": 5_000_000,
+                      "fps": 30, "video_codec": "h264", "delay": 400,
+                      "speed": 4.0}, DEFAULT_WEIGHTS)
+    assert 0.0 <= s <= 1.0
