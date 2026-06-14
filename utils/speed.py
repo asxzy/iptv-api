@@ -12,6 +12,7 @@ from utils.config import config
 from utils.ffmpeg import probe_url, ffmpeg_url
 from utils.i18n import t
 from utils.requests.tools import headers as request_headers
+from utils.scoring import compute_score, is_sustainable
 from utils.tools import get_resolution_value
 from utils.types import TestResult, ChannelTestResult, TestResultCacheData
 
@@ -27,6 +28,7 @@ open_filter_speed = config.open_filter_speed
 min_speed_value = config.min_speed
 resolution_speed_map = config.resolution_speed_map
 speed_test_limit = config.speed_test_limit
+ranking_weights = config.ranking_weights
 m3u8_headers = ['application/x-mpegurl', 'application/vnd.apple.mpegurl', 'audio/mpegurl', 'audio/x-mpegurl']
 default_ipv6_delay = 0.1
 default_ipv6_resolution = "1920x1080"
@@ -532,8 +534,13 @@ def get_sort_result(
                 resolution_value = get_resolution_value(resolution)
                 if resolution_value < min_resolution or resolution_value > max_resolution:
                     continue
+            if not is_sustainable(result, ranking_weights):
+                continue
         total_result.append(result)
-    total_result.sort(key=lambda item: item.get("speed") or 0, reverse=True)
+    total_result.sort(
+        key=lambda item: (compute_score(item, ranking_weights), item.get("speed") or 0),
+        reverse=True,
+    )
     return total_result
 
 

@@ -157,3 +157,45 @@ def test_config_ranking_weights_has_all_keys():
     assert set(w.keys()) == set(DEFAULT_WEIGHTS.keys())
     for k in DEFAULT_WEIGHTS:
         assert isinstance(w[k], float)
+
+
+def test_get_sort_result_orders_by_blended_score():
+    from utils.speed import get_sort_result
+    rich = {"url": "rich", "ipv_type": "ipv4", "delay": 500, "speed": 8.0,
+            "resolution": "1920x1080", "bitrate": 6_000_000, "fps": 25,
+            "video_codec": "h264"}
+    poor = {"url": "poor", "ipv_type": "ipv4", "delay": 500, "speed": 8.0,
+            "resolution": "1920x1080", "bitrate": 1_200_000, "fps": 25,
+            "video_codec": "h264"}
+    out = get_sort_result([poor, rich], filter_speed=False, filter_resolution=False)
+    assert [r["url"] for r in out] == ["rich", "poor"]
+
+
+def test_get_sort_result_drops_dead_streams():
+    from utils.speed import get_sort_result
+    dead = {"url": "dead", "ipv_type": "ipv4", "delay": -1, "speed": 0}
+    live = {"url": "live", "ipv_type": "ipv4", "delay": 500, "speed": 5.0}
+    out = get_sort_result([dead, live], filter_speed=False, filter_resolution=False)
+    assert [r["url"] for r in out] == ["live"]
+
+
+def test_get_sort_result_gates_unsustainable_when_not_supply():
+    from utils.speed import get_sort_result
+    starves = {"url": "starves", "ipv_type": "ipv4", "delay": 500, "speed": 0.25,
+               "bitrate": 8_000_000, "resolution": "1920x1080"}
+    ok = {"url": "ok", "ipv_type": "ipv4", "delay": 500, "speed": 3.0,
+          "bitrate": 8_000_000, "resolution": "1920x1080"}
+    out = get_sort_result([starves, ok], supply=False, filter_speed=False,
+                          filter_resolution=False)
+    assert [r["url"] for r in out] == ["ok"]
+    out2 = get_sort_result([starves, ok], supply=True, filter_speed=False,
+                           filter_resolution=False)
+    assert {r["url"] for r in out2} == {"ok", "starves"}
+
+
+def test_get_sort_result_speed_breaks_ties():
+    from utils.speed import get_sort_result
+    a = {"url": "a", "ipv_type": "ipv4", "delay": 500, "speed": 2.0}
+    b = {"url": "b", "ipv_type": "ipv4", "delay": 500, "speed": 9.0}
+    out = get_sort_result([a, b], filter_speed=False, filter_resolution=False)
+    assert [r["url"] for r in out] == ["b", "a"]
