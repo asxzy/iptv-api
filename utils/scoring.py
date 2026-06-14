@@ -51,3 +51,49 @@ def fps_score(fps):
     if f >= 24:
         return 0.55
     return 0.4
+
+
+# h264-equivalent bitrate multipliers: how much bitrate a codec needs for the
+# same visual quality. <1 means more efficient than h264.
+CODEC_EFFICIENCY = {
+    "h264": 1.0, "avc": 1.0, "avc1": 1.0,
+    "hevc": 0.5, "h265": 0.5, "hev1": 0.5, "hvc1": 0.5,
+    "av1": 0.4, "av01": 0.4,
+    "vp9": 0.6,
+    "mpeg2video": 2.0, "mpeg2": 2.0,
+}
+
+DEFAULT_WEIGHTS = {
+    # top-level blend
+    "w_quality": 0.5, "w_loadability": 0.5,
+    # quality sub-weights (sum to 1.0)
+    "w_res": 0.5, "w_enc": 0.35, "w_fps": 0.15,
+    # loadability sub-weights (sum to 1.0)
+    "w_start": 0.3, "w_margin": 0.7,
+    # thresholds
+    "delay_max": 3000.0,        # ms; delay >= this -> startup 0
+    "margin_target": 2.0,       # throughput/bitrate at which margin saturates to 1
+    "target_bpp": 0.1,          # h264-equivalent bits-per-pixel-per-frame "good enough"
+    "ref_throughput_mbps": 10.0,  # bitrate-unknown fallback saturation point
+}
+
+
+def encoding_adequacy(resolution, bitrate_bps, fps, video_codec, weights=DEFAULT_WEIGHTS):
+    """
+    Saturating 0-1 measure of how richly the source is encoded for its
+    resolution, normalized for codec efficiency. Missing bitrate/resolution
+    -> NEUTRAL (not punished).
+    """
+    px = get_resolution_value(resolution)
+    if not bitrate_bps or bitrate_bps <= 0 or px <= 0:
+        return NEUTRAL
+    try:
+        f = float(fps) if fps else 25.0
+    except (TypeError, ValueError):
+        f = 25.0
+    if f <= 0:
+        f = 25.0
+    bpp = bitrate_bps / (px * f)
+    codec_factor = CODEC_EFFICIENCY.get((video_codec or "").lower(), 1.0)
+    adjusted_bpp = bpp / codec_factor
+    return min(1.0, adjusted_bpp / weights["target_bpp"])

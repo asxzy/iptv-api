@@ -40,3 +40,28 @@ def test_fps_score_unknown_is_neutral_default():
     assert fps_score(None) == 0.6
     assert fps_score("not-a-number") == 0.6
     assert fps_score(0) == 0.6
+
+
+def test_encoding_adequacy_saturates_at_good_bitrate():
+    from utils.scoring import encoding_adequacy, DEFAULT_WEIGHTS
+    # 1080p (2.07M px) @ 25fps, h264. target_bpp default 0.1.
+    # bitrate giving bpp == target: 0.1 * 2073600 * 25 = 5,184,000 bps
+    good = encoding_adequacy("1920x1080", 5_184_000, 25, "h264", DEFAULT_WEIGHTS)
+    assert good == 1.0
+    # half that bitrate -> half adequacy
+    half = encoding_adequacy("1920x1080", 2_592_000, 25, "h264", DEFAULT_WEIGHTS)
+    assert abs(half - 0.5) < 1e-6
+
+
+def test_encoding_adequacy_hevc_worth_more_per_bit():
+    from utils.scoring import encoding_adequacy, DEFAULT_WEIGHTS
+    # hevc factor 0.5 -> half the bitrate scores like full-bitrate h264
+    hevc = encoding_adequacy("1920x1080", 2_592_000, 25, "hevc", DEFAULT_WEIGHTS)
+    assert hevc == 1.0
+
+
+def test_encoding_adequacy_missing_signal_is_neutral():
+    from utils.scoring import encoding_adequacy, DEFAULT_WEIGHTS, NEUTRAL
+    assert encoding_adequacy("1920x1080", None, 25, "h264", DEFAULT_WEIGHTS) == NEUTRAL
+    assert encoding_adequacy(None, 5_000_000, 25, "h264", DEFAULT_WEIGHTS) == NEUTRAL
+    assert encoding_adequacy("1920x1080", 0, 25, "h264", DEFAULT_WEIGHTS) == NEUTRAL
