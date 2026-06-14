@@ -8,3 +8,5 @@ no_signal
 iptv.catvod.com
 backup
 applife
+http://107.150.60.122/live/cctv5p.m3u8
+http://198.204.228.26/live/cctv5p.m3u8
