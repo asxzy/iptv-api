@@ -4,7 +4,7 @@ import time
 
 sys.path.append(os.path.dirname(sys.path[0]))
 from flask import Flask, send_from_directory, make_response, request, jsonify, Response
-from utils.tools import get_result_file_content, resource_path, get_public_url
+from utils.tools import get_result_file_content, resource_path, get_public_url, merge_txt_multi_source
 from utils.config import config
 import utils.constants as constants
 import atexit
@@ -14,6 +14,13 @@ import logging
 from utils.i18n import t
 from werkzeug.utils import secure_filename
 import mimetypes
+import requests as _requests
+from utils.requests.tools import get_redirect_chain_content, headers as _default_headers
+from service.proxy import load_ad_filters, filter_playlist, rewrite_list_to_proxy
+
+# Module-level cached AdFilter — loaded once at import time for performance.
+# Reload the process to pick up changes to proxy_ad_filter.txt / blacklist.txt.
+_ad_filter = load_ad_filters()
 
 app = Flask(__name__)
 log = logging.getLogger('werkzeug')
@@ -307,6 +314,168 @@ def hls_proxy(channel_id):
         hls_last_access[channel_id] = now
 
     return Response(data, mimetype='application/vnd.apple.mpegurl')
+
+
+@app.route("/proxy")
+def proxy_playlist():
+    """
+    GET /proxy?url=<urlencoded upstream HLS playlist URL>
+
+    Fetches the upstream playlist, strips ad segments (using the module-level
+    cached AdFilter), rewrites nested URIs, and returns a clean playlist.
+
+    Config:
+      open_proxy      — if False, returns 404.
+      proxy_segments  — if True, segment URIs are rewritten to /proxy/segment?url=...
+                        instead of being left as absolute CDN URLs.
+    """
+    if not config.open_proxy:
+        return jsonify({"error": "proxy disabled"}), 404
+
+    url = request.args.get("url", "").strip()
+    if not url:
+        return jsonify({"error": "url parameter required"}), 400
+
+    chain, content = get_redirect_chain_content(url)
+    if not content or not content.strip():
+        return jsonify({"error": "upstream fetch failed or returned empty content"}), 502
+
+    # Resolved base URL for relative-URI resolution is the final redirect target.
+    base_url = chain[-1] if chain else url
+
+    # proxy_base from request.path so the rewritten links use the same host the
+    # client used (works transparently behind nginx / any path prefix).
+    proxy_base = request.path  # e.g. "/proxy"
+
+    segment_proxy_base = "/proxy/segment" if config.proxy_segments else None
+
+    text, _kind = filter_playlist(content, base_url, proxy_base, _ad_filter, segment_proxy_base)
+    return Response(text, content_type="application/vnd.apple.mpegurl; charset=utf-8")
+
+
+@app.route("/proxy/segment")
+def proxy_segment():
+    """
+    GET /proxy/segment?url=<urlencoded segment URL>
+
+    Pass-through streaming proxy for individual HLS media segments.
+    Only meaningful when proxy_segments is enabled, but the route is always
+    registered so requests are handled gracefully in all configurations.
+    """
+    url = request.args.get("url", "").strip()
+    if not url:
+        return jsonify({"error": "url parameter required"}), 400
+
+    proxy = config.http_proxy or None
+    proxies = {"http": proxy, "https": proxy} if proxy else None
+
+    try:
+        upstream = _requests.get(
+            url,
+            headers=_default_headers,
+            proxies=proxies,
+            stream=True,
+            timeout=30,
+        )
+        content_type = upstream.headers.get("Content-Type", "video/MP2T")
+
+        def _generate():
+            for chunk in upstream.iter_content(chunk_size=8192):
+                if chunk:
+                    yield chunk
+
+        return Response(
+            _generate(),
+            status=upstream.status_code,
+            content_type=content_type,
+        )
+    except Exception:
+        return jsonify({"error": "upstream segment fetch failed"}), 502
+
+
+def _read_result_file(path):
+    """Read a result file as text, returning None if the file does not exist."""
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as fh:
+            return fh.read()
+    return None
+
+
+def _serve_proxied_list(file_type, merge_source=False, mimetype="text/plain"):
+    """
+    Shared helper for the three proxied-list endpoints.
+
+    Reads the result file for *file_type* (derived from config.final_file),
+    optionally runs merge_txt_multi_source on txt content, rewrites every
+    station URL through the /proxy ad-filter endpoint, and returns a Response.
+
+    Returns 404 JSON when open_proxy is disabled, or the waiting_tip plain-text
+    when the result file has not yet been generated.
+    """
+    if not config.open_proxy:
+        return jsonify({"error": "proxy disabled"}), 404
+
+    base_path = os.path.splitext(config.final_file)[0]
+    file_path = base_path + "." + file_type
+
+    content = _read_result_file(file_path)
+    if content is None:
+        return Response(constants.waiting_tip, mimetype="text/plain")
+
+    if merge_source:
+        content = merge_txt_multi_source(content)
+
+    # Root-relative proxy base: the player resolves "/proxy?url=..." against the URL it
+    # fetched this list from, so it uses the exact scheme/host/port the client used.
+    # Avoids emitting an internal host/port (e.g. gunicorn's 127.0.0.1:5180) that
+    # request.host_url would report when running behind nginx / port-forwarding.
+    proxy_base = "/proxy"
+    rewritten = rewrite_list_to_proxy(content, file_type, proxy_base)
+    # Declare charset explicitly: the m3u mimetype (application/vnd.apple.mpegurl)
+    # is not text/* so werkzeug won't auto-append charset=utf-8, and the list
+    # contains non-ASCII channel names/emoji that otherwise render as mojibake.
+    return Response(rewritten, content_type=f"{mimetype}; charset=utf-8")
+
+
+@app.route("/proxy/m3u")
+def proxy_m3u():
+    """
+    GET /proxy/m3u
+
+    Serve the result m3u playlist with every station URL rewritten to point
+    through the /proxy ad-filter endpoint.  Requires open_proxy to be True.
+    """
+    return _serve_proxied_list(
+        file_type="m3u",
+        mimetype="application/vnd.apple.mpegurl",
+    )
+
+
+@app.route("/proxy/txt")
+def proxy_txt():
+    """
+    GET /proxy/txt
+
+    Serve the result txt playlist with every station URL rewritten to point
+    through the /proxy ad-filter endpoint.  Requires open_proxy to be True.
+    """
+    return _serve_proxied_list(file_type="txt", mimetype="text/plain")
+
+
+@app.route("/proxy/txt/multi")
+def proxy_txt_multi():
+    """
+    GET /proxy/txt/multi
+
+    Like /proxy/txt but first collapses same-station lines into a single
+    '#'-joined multi-source line (merge_txt_multi_source), then rewrites all
+    URLs through /proxy.  Requires open_proxy to be True.
+    """
+    return _serve_proxied_list(
+        file_type="txt",
+        merge_source=True,
+        mimetype="text/plain",
+    )
 
 
 @app.post('/on_done')

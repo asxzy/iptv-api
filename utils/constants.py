@@ -23,6 +23,8 @@ whitelist_path = os.path.join(config_dir, "whitelist.txt")
 
 blacklist_path = os.path.join(config_dir, "blacklist.txt")
 
+proxy_ad_filter_path = os.path.join(config_dir, "proxy_ad_filter.txt")
+
 subscribe_path = os.path.join(config_dir, "subscribe.txt")
 
 epg_result_path = os.path.join(output_dir, "epg/epg.xml")
