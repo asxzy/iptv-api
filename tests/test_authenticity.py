@@ -111,3 +111,15 @@ def test_resolution_authenticity_unknown_or_lowest_tier_is_one():
     assert resolution_authenticity(None, 0.99, 0.96, 0.985) == 1.0
     assert resolution_authenticity("640x360", 0.99, 0.96, 0.985) == 1.0
     assert resolution_authenticity("1920x1080", None, 0.96, 0.985) == 1.0
+
+
+def test_config_has_authenticity_settings():
+    from utils.config import config
+    w = config.ranking_weights
+    assert "bpp_prior_floor" in w and "bpp_prior_knee" in w
+    a = config.authenticity_config
+    assert set(a.keys()) == {"ssim_low", "ssim_high"}
+    assert isinstance(config.open_deep_probe, bool)
+    assert isinstance(config.deep_probe_top_n, int)
+    assert isinstance(config.deep_probe_sample_seconds, int)
+    assert isinstance(config.deep_probe_timeout, int)

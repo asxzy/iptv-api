@@ -407,6 +407,30 @@ class ConfigManager:
         return self.config.getboolean("Settings", "open_full_probe", fallback=False)
 
     @property
+    def authenticity_config(self):
+        getf = self.config.getfloat
+        return {
+            "ssim_low": getf("Settings", "ssim_low", fallback=0.96),
+            "ssim_high": getf("Settings", "ssim_high", fallback=0.985),
+        }
+
+    @property
+    def open_deep_probe(self):
+        return self.config.getboolean("Settings", "open_deep_probe", fallback=True)
+
+    @property
+    def deep_probe_top_n(self):
+        return self.config.getint("Settings", "deep_probe_top_n", fallback=5)
+
+    @property
+    def deep_probe_sample_seconds(self):
+        return self.config.getint("Settings", "deep_probe_sample_seconds", fallback=4)
+
+    @property
+    def deep_probe_timeout(self):
+        return self.config.getint("Settings", "deep_probe_timeout", fallback=15)
+
+    @property
     def open_unmatch_category(self):
         return self.config.getboolean("Settings", "open_unmatch_category", fallback=False)
 
