@@ -76,3 +76,18 @@ def test_quality_score_no_signals_unchanged_factors_are_one():
                 + w["w_enc"] * encoding_adequacy("1280x720", None, 25, "h264", w)
                 + w["w_fps"] * fps_score(25))
     assert abs(quality_score(r, w) - expected) < 1e-9
+
+
+def test_fps_authenticity_frame_dup_collapses_credit():
+    from utils.authenticity import fps_authenticity
+    from utils.scoring import fps_score
+    a = fps_authenticity(50, 0.5)
+    assert abs(a - fps_score(25) / fps_score(50)) < 1e-9
+
+
+def test_fps_authenticity_genuine_and_unknown():
+    from utils.authenticity import fps_authenticity
+    assert fps_authenticity(50, 1.0) == 1.0
+    assert fps_authenticity(None, 0.5) == 1.0
+    assert fps_authenticity(50, None) == 1.0
+    assert 0.0 <= fps_authenticity(50, 0.1) <= 1.0
