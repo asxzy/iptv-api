@@ -119,7 +119,13 @@ def bpp_prior(adequacy, weights=DEFAULT_WEIGHTS):
 
 
 def quality_score(result, weights=DEFAULT_WEIGHTS):
-    """Blend resolution, encoding adequacy, and fps into a 0-1 quality score."""
+    """
+    Blend resolution, encoding adequacy, and fps into a 0-1 quality score.
+
+    The resolution and fps credits are scaled by per-dimension authenticity
+    factors A_res / A_fps: explicit `a_res`/`a_fps` from the deep-probe pass when
+    present, else a cheap bpp prior derived from encoding adequacy.
+    """
     resolution = result.get("resolution")
     bitrate = result.get("bitrate")
     fps = result.get("fps")
@@ -127,7 +133,12 @@ def quality_score(result, weights=DEFAULT_WEIGHTS):
     rs = resolution_score(resolution)
     es = encoding_adequacy(resolution, bitrate, fps, codec, weights)
     fs = fps_score(fps)
-    return weights["w_res"] * rs + weights["w_enc"] * es + weights["w_fps"] * fs
+    prior = bpp_prior(es, weights)
+    a_res = result.get("a_res")
+    a_fps = result.get("a_fps")
+    a_res = prior if a_res is None else a_res
+    a_fps = prior if a_fps is None else a_fps
+    return weights["w_res"] * (rs * a_res) + weights["w_enc"] * es + weights["w_fps"] * (fs * a_fps)
 
 
 def _speed_mbps(result):

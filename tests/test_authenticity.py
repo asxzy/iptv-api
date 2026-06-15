@@ -38,3 +38,41 @@ def test_bpp_prior_bounds():
 def test_bpp_prior_neutral_adequacy_is_one():
     from utils.scoring import bpp_prior, DEFAULT_WEIGHTS, NEUTRAL
     assert bpp_prior(NEUTRAL, DEFAULT_WEIGHTS) == 1.0
+
+
+def test_quality_score_uses_explicit_authenticity_factors():
+    from utils.scoring import quality_score, DEFAULT_WEIGHTS
+    base = {"resolution": "1920x1080", "bitrate": 5_000_000, "fps": 50,
+            "video_codec": "h264"}
+    honest = quality_score(base, DEFAULT_WEIGHTS)
+    faked = quality_score({**base, "a_res": 0.71, "a_fps": 0.55}, DEFAULT_WEIGHTS)
+    assert faked < honest
+
+
+def test_quality_score_fake_1080p_ranks_below_honest_720p():
+    from utils.scoring import quality_score, DEFAULT_WEIGHTS
+    fake = quality_score({"resolution": "1920x1080", "bitrate": 2_500_000,
+                          "fps": 25, "video_codec": "h264", "a_res": 0.714,
+                          "a_fps": 1.0}, DEFAULT_WEIGHTS)
+    honest_720 = quality_score({"resolution": "1280x720", "bitrate": 3_000_000,
+                                "fps": 25, "video_codec": "h264"}, DEFAULT_WEIGHTS)
+    assert honest_720 > fake
+
+
+def test_quality_score_cheap_prior_applies_when_no_deep_signal():
+    from utils.scoring import quality_score, DEFAULT_WEIGHTS
+    starved = quality_score({"resolution": "1920x1080", "bitrate": 200_000,
+                             "fps": 25, "video_codec": "h264"}, DEFAULT_WEIGHTS)
+    rich = quality_score({"resolution": "1920x1080", "bitrate": 5_000_000,
+                          "fps": 25, "video_codec": "h264"}, DEFAULT_WEIGHTS)
+    assert starved < rich
+
+
+def test_quality_score_no_signals_unchanged_factors_are_one():
+    from utils.scoring import quality_score, resolution_score, fps_score, encoding_adequacy, DEFAULT_WEIGHTS
+    r = {"resolution": "1280x720", "fps": 25, "video_codec": "h264"}
+    w = DEFAULT_WEIGHTS
+    expected = (w["w_res"] * resolution_score("1280x720")
+                + w["w_enc"] * encoding_adequacy("1280x720", None, 25, "h264", w)
+                + w["w_fps"] * fps_score(25))
+    assert abs(quality_score(r, w) - expected) < 1e-9
