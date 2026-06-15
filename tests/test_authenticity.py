@@ -140,3 +140,17 @@ def test_parse_mpdecimate_keep_ratio():
 def test_parse_mpdecimate_keep_ratio_no_frames_returns_none():
     from utils.ffmpeg.deep_probe import _parse_mpdecimate_keep_ratio
     assert _parse_mpdecimate_keep_ratio("no decision lines here") is None
+
+
+def test_parse_ssim_all():
+    from utils.ffmpeg.deep_probe import _parse_ssim_all
+    stderr = (
+        "[Parsed_ssim_2 @ 0x55] SSIM Y:0.990 U:0.992 V:0.991 All:0.990 (20.1)\n"
+        "[Parsed_ssim_2 @ 0x55] SSIM All:0.987 (18.9)\n"
+    )
+    assert abs(_parse_ssim_all(stderr) - 0.987) < 1e-9
+
+
+def test_parse_ssim_all_missing_returns_none():
+    from utils.ffmpeg.deep_probe import _parse_ssim_all
+    assert _parse_ssim_all("no ssim here") is None

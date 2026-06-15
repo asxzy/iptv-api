@@ -70,3 +70,53 @@ async def measure_keep_ratio(url, headers=None, sample_seconds=4, timeout=15):
     if out is None:
         return None
     return _parse_mpdecimate_keep_ratio(out)
+
+
+from utils.tools import get_resolution_value
+
+_SSIM_ALL = re.compile(r"All:([0-9]*\.?[0-9]+)")
+
+
+def _parse_ssim_all(stderr: str):
+    """Last SSIM All:<value> from ffmpeg ssim filter output, or None."""
+    matches = _SSIM_ALL.findall(stderr or "")
+    if not matches:
+        return None
+    try:
+        return float(matches[-1])
+    except (TypeError, ValueError):
+        return None
+
+
+async def measure_upscale_ssim(url, declared_resolution, lower_resolution,
+                               headers=None, sample_seconds=4, timeout=15):
+    """
+    Mean SSIM between native frames and their downscale-to-`lower_resolution`-then-
+    upscale-back round-trip. High SSIM => no real detail beyond the lower tier =>
+    upscaled. Returns None on failure or when resolutions are unparseable.
+    """
+    px = get_resolution_value(declared_resolution)
+    low_px = get_resolution_value(lower_resolution)
+    if px <= 0 or low_px <= 0:
+        return None
+    m = re.search(r"(\d+)[xX*](\d+)", declared_resolution or "")
+    lm = re.search(r"(\d+)[xX*](\d+)", lower_resolution or "")
+    if not m or not lm:
+        return None
+    w, h = m.group(1), m.group(2)
+    lw, lh = lm.group(1), lm.group(2)
+    filtergraph = (
+        f"[0:v]split=2[a][b];"
+        f"[b]scale={lw}:{lh},scale={w}:{h}[c];"
+        f"[a][c]ssim"
+    )
+    args = [
+        "ffmpeg", "-hide_banner", "-loglevel", "info",
+        *_header_args(headers),
+        "-t", str(sample_seconds), "-i", url,
+        "-an", "-lavfi", filtergraph, "-f", "null", "-",
+    ]
+    out = await _run(args, timeout)
+    if out is None:
+        return None
+    return _parse_ssim_all(out)
