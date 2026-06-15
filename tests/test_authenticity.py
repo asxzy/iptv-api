@@ -123,3 +123,20 @@ def test_config_has_authenticity_settings():
     assert isinstance(config.deep_probe_top_n, int)
     assert isinstance(config.deep_probe_sample_seconds, int)
     assert isinstance(config.deep_probe_timeout, int)
+
+
+def test_parse_mpdecimate_keep_ratio():
+    from utils.ffmpeg.deep_probe import _parse_mpdecimate_keep_ratio
+    stderr = (
+        "[Parsed_mpdecimate_0 @ 0x55] keep pts:1 pts_time:0.04 drop_count:-1\n"
+        "[Parsed_mpdecimate_0 @ 0x55] drop pts:2 pts_time:0.08 drop_count:1\n"
+        "[Parsed_mpdecimate_0 @ 0x55] keep pts:3 pts_time:0.12 drop_count:-1\n"
+        "[Parsed_mpdecimate_0 @ 0x55] drop pts:4 pts_time:0.16 drop_count:1\n"
+        "frame=    2 fps=0.0 q=-0.0 Lsize=N/A time=00:00:00.16 bitrate=N/A\n"
+    )
+    assert abs(_parse_mpdecimate_keep_ratio(stderr) - 0.5) < 1e-9
+
+
+def test_parse_mpdecimate_keep_ratio_no_frames_returns_none():
+    from utils.ffmpeg.deep_probe import _parse_mpdecimate_keep_ratio
+    assert _parse_mpdecimate_keep_ratio("no decision lines here") is None
