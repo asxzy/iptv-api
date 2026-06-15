@@ -154,3 +154,39 @@ def test_parse_ssim_all():
 def test_parse_ssim_all_missing_returns_none():
     from utils.ffmpeg.deep_probe import _parse_ssim_all
     assert _parse_ssim_all("no ssim here") is None
+
+
+def test_deep_probe_pass_mutates_top_n(monkeypatch):
+    import asyncio
+    import utils.channel as channel
+
+    async def fake_keep(url, headers=None, sample_seconds=4, timeout=15):
+        return 0.5 if "dup" in url else 1.0
+
+    async def fake_ssim(url, declared_resolution, lower_resolution, headers=None,
+                        sample_seconds=4, timeout=15):
+        return 0.99 if "upscale" in url else 0.95
+
+    # measure_* are module-level names in channel (imported), so patchable here.
+    # config.open_deep_probe / deep_probe_top_n are properties — do NOT setattr them;
+    # rely on the defaults written to config.ini (open_deep_probe=True, top_n=5).
+    monkeypatch.setattr(channel, "measure_keep_ratio", fake_keep)
+    monkeypatch.setattr(channel, "measure_upscale_ssim", fake_ssim)
+
+    grouped = {"cat": {"ch": [
+        {"url": "http://upscale/1", "delay": 100, "speed": 5.0,
+         "resolution": "1920x1080", "fps": 25, "bitrate": 5_000_000},
+        {"url": "http://dup/2", "delay": 100, "speed": 5.0,
+         "resolution": "1920x1080", "fps": 50, "bitrate": 5_000_000},
+        {"url": "http://honest/3", "delay": 100, "speed": 5.0,
+         "resolution": "1280x720", "fps": 25, "bitrate": 3_000_000},
+    ]}}
+    asyncio.run(channel.deep_probe_pass(grouped))
+
+    from utils.scoring import fps_score
+    up = grouped["cat"]["ch"][0]
+    dup = grouped["cat"]["ch"][1]
+    honest = grouped["cat"]["ch"][2]
+    assert up["a_res"] < 1.0
+    assert abs(dup["a_fps"] - fps_score(25) / fps_score(50)) < 1e-9
+    assert honest.get("a_res", 1.0) == 1.0
