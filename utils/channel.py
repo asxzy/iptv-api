@@ -52,6 +52,9 @@ from utils.tools import (
 )
 from utils.types import ChannelData, OriginType, CategoryChannelData, WhitelistMaps
 from utils.whitelist import is_url_whitelisted, get_whitelist_url, get_whitelist_total_count
+from utils.scoring import compute_score
+from utils.authenticity import fps_authenticity, resolution_authenticity, lower_resolution_tier
+from utils.ffmpeg.deep_probe import measure_keep_ratio, measure_upscale_ssim
 
 channel_alias = Alias()
 ip_checker = IPChecker()
@@ -728,6 +731,65 @@ def is_valid_speed_result(info) -> bool:
         return False
 
 
+async def _deep_probe_one(item, weights, auth_cfg, sem, logger=None):
+    """Run deep-probe detectors on one result dict and attach authenticity fields."""
+    async with sem:
+        url = item.get("url")
+        if not url:
+            return
+        headers = (config.open_headers and item.get("headers")) or None
+        sample = config.deep_probe_sample_seconds
+        timeout = config.deep_probe_timeout
+        declared_res = item.get("resolution")
+        declared_fps = item.get("fps")
+
+        keep_ratio = await measure_keep_ratio(url, headers, sample, timeout)
+        if keep_ratio is not None and declared_fps:
+            item["effective_fps"] = float(declared_fps) * keep_ratio
+            item["a_fps"] = fps_authenticity(declared_fps, keep_ratio)
+
+        lower = lower_resolution_tier(declared_res)
+        if lower is not None:
+            ssim = await measure_upscale_ssim(url, declared_res, lower, headers, sample, timeout)
+            if ssim is not None:
+                item["a_res"] = resolution_authenticity(
+                    declared_res, ssim, auth_cfg["ssim_low"], auth_cfg["ssim_high"]
+                )
+                item["effective_resolution"] = lower if item["a_res"] < 1.0 else declared_res
+
+        if logger and ("a_res" in item or "a_fps" in item):
+            logger.info(
+                "Deep-probe: %s | res %s -> a_res=%.2f | fps %s -> a_fps=%.2f",
+                url, declared_res, item.get("a_res", 1.0),
+                declared_fps, item.get("a_fps", 1.0),
+            )
+
+
+async def deep_probe_pass(grouped_results, logger=None):
+    """
+    Deep-probe the top-N finalists per channel (by preliminary score) and attach
+    a_res/a_fps/effective_* in place. No-op when disabled.
+    """
+    if not config.open_deep_probe:
+        return
+    warm = config.open_full_probe or (config.open_history and os.path.exists(constants.cache_path))
+    if not warm:
+        return
+    weights = config.ranking_weights
+    auth_cfg = config.authenticity_config
+    top_n = config.deep_probe_top_n
+    sem = asyncio.Semaphore(config.speed_test_limit)
+    tasks = []
+    for cate, names in grouped_results.items():
+        for name, items in names.items():
+            valid = [it for it in items if is_valid_speed_result(it)]
+            valid.sort(key=lambda it: (compute_score(it, weights), it.get("speed") or 0), reverse=True)
+            for it in valid[:top_n]:
+                tasks.append(_deep_probe_one(it, weights, auth_cfg, sem, logger))
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
 async def test_speed(data, ipv6=False, callback=None, on_task_complete=None):
     """
     Test speed of channel data
@@ -875,6 +937,11 @@ async def test_speed(data, ipv6=False, callback=None, on_task_complete=None):
 
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
+
+    try:
+        await deep_probe_pass(grouped_results, logger=logger)
+    except Exception:
+        logger.debug("deep_probe_pass failed", exc_info=True)
 
     close_logger_handlers(logger)
     close_logger_handlers(result_logger)

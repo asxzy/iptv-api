@@ -1,4 +1,5 @@
 import asyncio
+import os
 import http.cookies
 import re
 from time import time
@@ -12,6 +13,7 @@ from utils.config import config
 from utils.ffmpeg import probe_url, ffmpeg_url
 from utils.i18n import t
 from utils.requests.tools import headers as request_headers
+from utils.scoring import compute_score, is_sustainable
 from utils.tools import get_resolution_value
 from utils.types import TestResult, ChannelTestResult, TestResultCacheData
 
@@ -27,6 +29,20 @@ open_filter_speed = config.open_filter_speed
 min_speed_value = config.min_speed
 resolution_speed_map = config.resolution_speed_map
 speed_test_limit = config.speed_test_limit
+ranking_weights = config.ranking_weights
+
+
+def _full_probe_enabled() -> bool:
+    """
+    Whether to run ffprobe on every candidate to enrich quality signals.
+    Evaluated per call (not at import) so scheduler runs pick up the history
+    cache written by a previous run. Honors open_history; force via open_full_probe.
+    """
+    if config.open_full_probe:
+        return True
+    return config.open_history and os.path.exists(constants.cache_path)
+
+
 m3u8_headers = ['application/x-mpegurl', 'application/vnd.apple.mpegurl', 'audio/mpegurl', 'audio/x-mpegurl']
 default_ipv6_delay = 0.1
 default_ipv6_resolution = "1920x1080"
@@ -201,28 +217,44 @@ async def get_result(url: str, headers: dict = None, resolution: str = None,
                     m3u8_obj = m3u8.loads(url_content)
                     playlists = m3u8_obj.playlists
                     segments = m3u8_obj.segments
+                    segment_pairs = []
                     if playlists:
                         best_playlist = max(m3u8_obj.playlists, key=lambda p: p.stream_info.bandwidth)
                         playlist_url = urljoin(url, best_playlist.uri)
                         playlist_content = await get_url_content(playlist_url, headers, session, timeout)
                         if playlist_content:
                             media_playlist = m3u8.loads(playlist_content)
-                            segment_urls = [urljoin(playlist_url, segment.uri) for segment in media_playlist.segments]
+                            segment_pairs = [
+                                (urljoin(playlist_url, segment.uri), segment.duration)
+                                for segment in media_playlist.segments
+                            ]
                     else:
-                        segment_urls = [urljoin(url, segment.uri) for segment in segments]
-                    if not segment_urls:
+                        segment_pairs = [
+                            (urljoin(url, segment.uri), segment.duration) for segment in segments
+                        ]
+                    if not segment_pairs:
                         raise Exception("Segment urls not found")
                 else:
                     res_info = await get_speed_with_download(url, headers, session, timeout)
                     info.update({'speed': res_info['speed'], 'delay': res_info['delay']})
                 start_time = time()
-                sampled_segment_urls = sample_segment_urls(segment_urls, speed_test_limit)
-                tasks = [get_speed_with_download(ts_url, headers, session, timeout) for ts_url in sampled_segment_urls]
+                sampled_pairs = sample_segment_urls(segment_pairs, speed_test_limit)
+                tasks = [get_speed_with_download(ts_url, headers, session, timeout)
+                         for ts_url, _ in sampled_pairs]
                 results = await asyncio.gather(*tasks, return_exceptions=True)
                 total_size = sum(result['size'] for result in results if isinstance(result, dict))
                 total_time = sum(result['time'] for result in results if isinstance(result, dict))
                 info['speed'] = total_size / total_time / 1024 / 1024 if total_time > 0 else 0
                 info['delay'] = int(round((time() - start_time) * 1000))
+                seg_bytes = 0
+                seg_duration = 0.0
+                for (_, seg_dur), seg_res in zip(sampled_pairs, results):
+                    if isinstance(seg_res, dict) and seg_res.get('size'):
+                        seg_bytes += seg_res['size']
+                        if seg_dur:
+                            seg_duration += seg_dur
+                if seg_bytes > 0 and seg_duration > 0:
+                    info['bitrate'] = seg_bytes * 8 / seg_duration
                 try:
                     if round(info['speed'], 2) == 0 and info['delay'] != -1:
                         ff_out = await ffmpeg_url(url, headers, timeout)
@@ -253,14 +285,28 @@ async def get_result(url: str, headers: dict = None, resolution: str = None,
     except:
         pass
     finally:
-        if filter_resolution and not location and not info.get('resolution') and info.get('delay') != -1:
+        full_probe = _full_probe_enabled()
+        need_probe = (
+            not location and info.get('delay') != -1 and (
+                (filter_resolution and not info.get('resolution'))
+                or (full_probe and (not info.get('fps') or not info.get('video_codec')
+                                    or not info.get('bitrate')))
+            )
+        )
+        if need_probe:
             try:
                 probed = await probe_url(url, headers, timeout=timeout)
                 if probed:
-                    info['resolution'] = probed.get('resolution')
-                    info['fps'] = probed.get('fps')
-                    info['video_codec'] = probed.get('video_codec')
-                    info['audio_codec'] = probed.get('audio_codec')
+                    if not info.get('resolution'):
+                        info['resolution'] = probed.get('resolution')
+                    if not info.get('fps'):
+                        info['fps'] = probed.get('fps')
+                    if not info.get('video_codec'):
+                        info['video_codec'] = probed.get('video_codec')
+                    if not info.get('audio_codec'):
+                        info['audio_codec'] = probed.get('audio_codec')
+                    if not info.get('bitrate') and probed.get('bitrate'):
+                        info['bitrate'] = probed.get('bitrate')
             except Exception:
                 pass
         return info
@@ -434,11 +480,27 @@ def sample_segment_urls(segment_urls: list, limit: int) -> list:
 
 
 def get_avg_result(result) -> TestResult:
+    bitrates = [item.get("bitrate") for item in result if item.get("bitrate")]
+    fps_values = []
+    for item in result:
+        fv = item.get("fps")
+        if fv is None:
+            continue
+        try:
+            fps_values.append(float(fv))
+        except (TypeError, ValueError):
+            continue
+    video_codec = next((item.get("video_codec") for item in result if item.get("video_codec")), None)
+    audio_codec = next((item.get("audio_codec") for item in result if item.get("audio_codec")), None)
     return {
         'speed': sum(item['speed'] or 0 for item in result) / len(result),
         'delay': max(
             int(sum(item['delay'] or -1 for item in result) / len(result)), -1),
-        'resolution': max((item['resolution'] for item in result), key=get_resolution_value)
+        'resolution': max((item['resolution'] for item in result), key=get_resolution_value),
+        'bitrate': (sum(bitrates) / len(bitrates)) if bitrates else None,
+        'fps': max(fps_values) if fps_values else None,
+        'video_codec': video_codec,
+        'audio_codec': audio_codec,
     }
 
 
@@ -532,8 +594,13 @@ def get_sort_result(
                 resolution_value = get_resolution_value(resolution)
                 if resolution_value < min_resolution or resolution_value > max_resolution:
                     continue
+            if not is_sustainable(result, ranking_weights):
+                continue
         total_result.append(result)
-    total_result.sort(key=lambda item: item.get("speed") or 0, reverse=True)
+    total_result.sort(
+        key=lambda item: (compute_score(item, ranking_weights), item.get("speed") or 0),
+        reverse=True,
+    )
     return total_result
 
 

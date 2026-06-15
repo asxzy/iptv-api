@@ -48,11 +48,21 @@ def _parse_probe_data(data: dict) -> dict | None:
     except Exception:
         res = None
 
+    fmt = data.get('format', {}) or {}
+    bitrate = None
+    try:
+        br = fmt.get('bit_rate')
+        if br is not None:
+            bitrate = float(br)
+    except (TypeError, ValueError):
+        bitrate = None
+
     meta = {
         'video_codec': _safe_get(video, 'codec_name'),
         'audio_codec': _safe_get(audio, 'codec_name'),
         'resolution': res,
         'fps': frame_rate_val,
+        'bitrate': bitrate,
     }
 
     return meta

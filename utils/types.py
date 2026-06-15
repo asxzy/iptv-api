@@ -38,6 +38,7 @@ class TestResult(TypedDict):
     video_codec: NotRequired[str | None]
     audio_codec: NotRequired[str | None]
     fps: NotRequired[float | None]
+    bitrate: NotRequired[int | float | None]
 
 
 TestResultCacheData = dict[str, list[TestResult]]
