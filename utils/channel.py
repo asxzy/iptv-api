@@ -772,6 +772,9 @@ async def deep_probe_pass(grouped_results, logger=None):
     """
     if not config.open_deep_probe:
         return
+    warm = config.open_full_probe or (config.open_history and os.path.exists(constants.cache_path))
+    if not warm:
+        return
     weights = config.ranking_weights
     auth_cfg = config.authenticity_config
     top_n = config.deep_probe_top_n

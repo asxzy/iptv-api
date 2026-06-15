@@ -172,6 +172,9 @@ def test_deep_probe_pass_mutates_top_n(monkeypatch):
     # rely on the defaults written to config.ini (open_deep_probe=True, top_n=5).
     monkeypatch.setattr(channel, "measure_keep_ratio", fake_keep)
     monkeypatch.setattr(channel, "measure_upscale_ssim", fake_ssim)
+    # Force the warm-mode gate to pass deterministically (open_history defaults
+    # True; cache.gz may be absent in the test environment).
+    monkeypatch.setattr(channel.os.path, "exists", lambda p: True)
 
     grouped = {"cat": {"ch": [
         {"url": "http://upscale/1", "delay": 100, "speed": 5.0,
