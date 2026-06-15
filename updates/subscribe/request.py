@@ -1,3 +1,4 @@
+import logging
 import os
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -310,6 +311,11 @@ async def get_channels_by_subscribe_urls(
             0,
         )
     logger = get_logger(constants.unmatch_log_path, level=INFO, init=True)
+    for handler in logger.handlers:
+        if isinstance(handler, logging.FileHandler):
+            handler.setFormatter(logging.Formatter(
+                "%(asctime)s [%(levelname)s] [UNMATCH] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+            ))
     request_timeout = config.request_timeout
     open_headers = config.open_headers
     open_unmatch_category = config.open_unmatch_category
@@ -370,7 +376,7 @@ async def get_channels_by_subscribe_urls(
                         if data_name and url:
                             name = format_channel_name(data_name)
                             if normalized_names and name not in normalized_names:
-                                logger.info(f"{data_name},{url}")
+                                logger.info(f"{data_name}\n  URL: {url}")
                                 if not open_unmatch_category:
                                     continue
                             url_partition = url.partition("$")
