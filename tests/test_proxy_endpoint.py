@@ -122,7 +122,7 @@ def test_proxy_media_filters_ads(client):
     chain = [_BASE_URL]
     # Patch fetch and use an ad filter that recognises /ad/ as ad keyword
     with _patch_fetch(chain, _MEDIA_WITH_AD):
-        with mock.patch("service.app._ad_filter", AdFilter(keywords=["/ad/"])):
+        with mock.patch("service.app.get_ad_filter", return_value=AdFilter(keywords=["/ad/"])):
             resp = client.get("/proxy?url=http%3A%2F%2Fupstream.example.com%2Flive%2Fstream.m3u8")
 
     assert resp.status_code == 200

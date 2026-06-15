@@ -9,6 +9,8 @@ import re
 from urllib.parse import urljoin, quote, urlparse
 
 import utils.constants as constants
+from utils.file_watch import cached_from_files
+from utils.tools import resolve_config_path
 
 
 # ---------------------------------------------------------------------------
@@ -50,13 +52,11 @@ def load_ad_filters() -> AdFilter:
     Read config/proxy_ad_filter.txt if present (one token/line, '#' comments
     skipped, 're:' prefix → compiled regex).  Fall back to reading
     config/blacklist.txt keywords.  Resilient to missing files.
+
+    Both paths honor the user_ override (via resolve_config_path), so the proxy
+    reads the same blacklist file the scan does.
     """
-    # Resolve the proxy_ad_filter path defensively — constant may not exist yet.
-    proxy_ad_filter_path = getattr(
-        constants,
-        "proxy_ad_filter_path",
-        os.path.join("config", "proxy_ad_filter.txt"),
-    )
+    proxy_ad_filter_path, bl_path = _ad_filter_paths()
 
     keywords: list = []
     regexes: list = []
@@ -85,7 +85,6 @@ def load_ad_filters() -> AdFilter:
 
     if not _read_proxy_filter(proxy_ad_filter_path):
         # Fall back to blacklist.txt — keyword-only (no re: prefix support there)
-        bl_path = getattr(constants, "blacklist_path", os.path.join("config", "blacklist.txt"))
         try:
             if os.path.isfile(bl_path):
                 with open(bl_path, "r", encoding="utf-8") as fh:
@@ -98,6 +97,28 @@ def load_ad_filters() -> AdFilter:
             pass
 
     return AdFilter(keywords=keywords, regexes=regexes)
+
+
+def _ad_filter_paths() -> list:
+    """
+    The two files load_ad_filters() reads, resolved through the user_ override so
+    the loader and the change-watcher always agree on which files back the filter.
+    """
+    return [
+        resolve_config_path(constants.proxy_ad_filter_path),
+        resolve_config_path(constants.blacklist_path),
+    ]
+
+
+def get_ad_filter() -> AdFilter:
+    """
+    Shared AdFilter that auto-reloads when proxy_ad_filter.txt or blacklist.txt
+    changes on disk. Use this from request handlers instead of building an
+    AdFilter once at import time, so edits take effect without a restart.
+    """
+    return cached_from_files(
+        "proxy_ad_filter", _ad_filter_paths(), load_ad_filters, hash_content=True
+    )
 
 
 # ---------------------------------------------------------------------------

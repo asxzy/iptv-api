@@ -8,9 +8,9 @@ with verbose tracing at every recursion / fetch / keyword-check step.
 """
 import sys
 
-import utils.constants as constants
-from utils.tools import get_urls_from_file, check_url_by_keywords
+from utils.tools import check_url_by_keywords
 from utils.requests.tools import get_redirect_chain_content
+from utils.blacklist import get_blacklist
 from updates.subscribe import request as req
 
 DEFAULT_URL = "https://stream1.freetv.fun/940832bf25a15c5e44fa17a9b73f6dba14850e25b94c67f665d781642a9f24c1.m3u8"
@@ -18,7 +18,7 @@ DEFAULT_URL = "https://stream1.freetv.fun/940832bf25a15c5e44fa17a9b73f6dba14850e
 
 def main():
     url = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_URL
-    blacklist = get_urls_from_file(constants.blacklist_path, pattern_search=False)
+    blacklist = get_blacklist()
     print(f"blacklist keywords ({len(blacklist)}): {blacklist}")
     print(f"target url: {url}\n")
 

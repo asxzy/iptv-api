@@ -15,12 +15,8 @@ from utils.i18n import t
 from werkzeug.utils import secure_filename
 import mimetypes
 from utils.requests.tools import get_redirect_chain_content
-from service.proxy import load_ad_filters, filter_playlist, rewrite_list_to_proxy
+from service.proxy import get_ad_filter, filter_playlist, rewrite_list_to_proxy
 from utils.processing_status import status, read_status_file
-
-# Module-level cached AdFilter — loaded once at import time for performance.
-# Reload the process to pick up changes to proxy_ad_filter.txt / blacklist.txt.
-_ad_filter = load_ad_filters()
 
 app = Flask(__name__)
 log = logging.getLogger('werkzeug')
@@ -375,7 +371,7 @@ def proxy_playlist():
     # client used (works transparently behind nginx / any path prefix).
     proxy_base = request.path  # e.g. "/proxy"
 
-    text, _kind = filter_playlist(content, base_url, proxy_base, _ad_filter)
+    text, _kind = filter_playlist(content, base_url, proxy_base, get_ad_filter())
     return Response(text, content_type="application/vnd.apple.mpegurl; charset=utf-8")
 
 

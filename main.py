@@ -32,7 +32,6 @@ from utils.tools import (
     process_nested_dict,
     format_interval,
     check_ipv6_support,
-    get_urls_from_file,
     get_version_info,
     get_urls_len,
     get_public_url,
@@ -43,6 +42,7 @@ from utils.tools import (
 )
 from utils.types import CategoryChannelData
 from utils.whitelist import load_whitelist_maps
+from utils.blacklist import get_blacklist
 
 logger = get_logger(constants.log_path, init=True)
 
@@ -53,6 +53,7 @@ class UpdateSource:
     def __init__(self):
         self.whitelist_maps = None
         self.blacklist = None
+        self._blacklist_snapshot = None
         self.nested_blacklist_cache = {}
         self.nested_blacklist_lock = Lock()
 
@@ -127,7 +128,14 @@ class UpdateSource:
         logger.info("Phase: preparing channel data…")
         status.set_phase("preparing")
         self.whitelist_maps = load_whitelist_maps(constants.whitelist_path)
-        self.blacklist = get_urls_from_file(constants.blacklist_path, pattern_search=False)
+        self.blacklist = get_blacklist()
+        # The nested cache memoizes per-URL verdicts computed against the
+        # blacklist keywords; drop it when the blacklist changes so a live edit
+        # isn't masked by stale "allowed" verdicts from a previous run.
+        if self.blacklist != self._blacklist_snapshot:
+            with self.nested_blacklist_lock:
+                self.nested_blacklist_cache.clear()
+            self._blacklist_snapshot = list(self.blacklist)
         self.channel_items = get_channel_items(self.whitelist_maps, self.blacklist)
         self.channel_data = {}
 

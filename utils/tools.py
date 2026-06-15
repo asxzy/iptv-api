@@ -876,11 +876,20 @@ def get_real_path(path) -> str:
     return real_path
 
 
+def resolve_config_path(path: str) -> str:
+    """
+    Resolve a logical config path to the file actually read: apply resource_path
+    bundling then the user_ override. Single resolver so every reader (and any
+    file-change watcher) agrees on which file backs a config name.
+    """
+    return get_real_path(resource_path(path))
+
+
 def get_urls_from_file(path: str, pattern_search: bool = True) -> list:
     """
     Get the urls from file
     """
-    real_path = get_real_path(resource_path(path))
+    real_path = resolve_config_path(path)
     urls = []
     if os.path.exists(real_path):
         with open(real_path, "r", encoding="utf-8") as f:
