@@ -2,6 +2,8 @@ import asyncio
 import json
 import subprocess
 
+from .limits import INPUT_BOUND_ARGS, get_ffmpeg_semaphore
+
 
 def _parse_probe_data(data: dict) -> dict | None:
     """
@@ -79,6 +81,7 @@ async def probe_url(url: str, headers: dict = None, timeout: int = 10) -> dict |
         args = [
             'ffprobe',
             '-v', 'error',
+            *INPUT_BOUND_ARGS,
             '-show_format',
             '-show_streams',
             '-print_format', 'json',
@@ -87,39 +90,40 @@ async def probe_url(url: str, headers: dict = None, timeout: int = 10) -> dict |
             args += ['-headers', header_str]
         args += [url]
 
-        proc = await asyncio.create_subprocess_exec(*args, stdout=asyncio.subprocess.PIPE,
-                                                    stderr=asyncio.subprocess.PIPE)
-        try:
-            out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
+        async with get_ffmpeg_semaphore():
+            proc = await asyncio.create_subprocess_exec(*args, stdout=asyncio.subprocess.PIPE,
+                                                        stderr=asyncio.subprocess.PIPE)
             try:
-                proc.kill()
+                out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            except asyncio.TimeoutError:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                try:
+                    await proc.wait()
+                except Exception:
+                    pass
+                return None
             except Exception:
-                pass
-            try:
-                await proc.wait()
-            except Exception:
-                pass
-            return None
-        except Exception:
-            try:
-                proc.kill()
-            except Exception:
-                pass
-            try:
-                await proc.wait()
-            except Exception:
-                pass
-            return None
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                try:
+                    await proc.wait()
+                except Exception:
+                    pass
+                return None
 
-        if out:
-            try:
-                data = json.loads(out.decode('utf-8'))
-                meta = _parse_probe_data(data)
-                if meta:
-                    return meta
-            except Exception:
-                pass
+            if out:
+                try:
+                    data = json.loads(out.decode('utf-8'))
+                    meta = _parse_probe_data(data)
+                    if meta:
+                        return meta
+                except Exception:
+                    pass
     except Exception:
         if proc:
             try:
@@ -152,6 +156,7 @@ def probe_url_sync(url: str, headers: dict = None, timeout: int = 10) -> dict | 
     args = [
         'ffprobe',
         '-v', 'error',
+        *INPUT_BOUND_ARGS,
         '-show_format',
         '-show_streams',
         '-print_format', 'json',
@@ -202,6 +207,7 @@ async def get_resolution_ffprobe(url: str, headers: dict = None, timeout: int = 
         args = [
             'ffprobe',
             '-v', 'error',
+            *INPUT_BOUND_ARGS,
             '-select_streams', 'v:0',
             '-show_entries', 'stream=width,height',
             '-print_format', 'json',
@@ -210,40 +216,41 @@ async def get_resolution_ffprobe(url: str, headers: dict = None, timeout: int = 
             args += ['-headers', header_str]
         args += [url]
 
-        proc = await asyncio.create_subprocess_exec(*args, stdout=asyncio.subprocess.PIPE,
-                                                    stderr=asyncio.subprocess.PIPE)
-        try:
-            out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
+        async with get_ffmpeg_semaphore():
+            proc = await asyncio.create_subprocess_exec(*args, stdout=asyncio.subprocess.PIPE,
+                                                        stderr=asyncio.subprocess.PIPE)
             try:
-                proc.kill()
+                out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            except asyncio.TimeoutError:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                try:
+                    await proc.wait()
+                except Exception:
+                    pass
+                return None
             except Exception:
-                pass
-            try:
-                await proc.wait()
-            except Exception:
-                pass
-            return None
-        except Exception:
-            try:
-                proc.kill()
-            except Exception:
-                pass
-            try:
-                await proc.wait()
-            except Exception:
-                pass
-            return None
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                try:
+                    await proc.wait()
+                except Exception:
+                    pass
+                return None
 
-        if out:
-            j = json.loads(out.decode('utf-8'))
-            streams = j.get('streams') or []
-            if streams:
-                s = streams[0]
-                w = s.get('width')
-                h = s.get('height')
-                if w and h:
-                    return f"{w}x{h}"
+            if out:
+                j = json.loads(out.decode('utf-8'))
+                streams = j.get('streams') or []
+                if streams:
+                    s = streams[0]
+                    w = s.get('width')
+                    h = s.get('height')
+                    if w and h:
+                        return f"{w}x{h}"
     except Exception:
         if proc:
             try:

@@ -260,6 +260,11 @@ class ConfigManager:
         return self.config.getint("Settings", "speed_test_limit", fallback=5)
 
     @property
+    def ffmpeg_concurrency(self):
+        """Process-wide cap on concurrent ffmpeg/ffprobe subprocesses (bounds native memory)."""
+        return self.config.getint("Settings", "ffmpeg_concurrency", fallback=3)
+
+    @property
     def location(self):
         return [
             l.strip()

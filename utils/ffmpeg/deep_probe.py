@@ -13,6 +13,8 @@ return None, and the caller leaves the corresponding authenticity factor at 1.0.
 import asyncio
 import re
 
+from .limits import INPUT_BOUND_ARGS, get_ffmpeg_semaphore
+
 _MPDECIMATE_DECISION = re.compile(r"\[Parsed_mpdecimate[^\]]*\]\s+(keep|drop)\b")
 
 
@@ -40,28 +42,30 @@ def _header_args(headers: dict) -> list:
 
 async def _run(args: list, timeout: int):
     """Run ffmpeg, return combined stderr text, or None on any failure."""
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
-    except (FileNotFoundError, Exception):
-        return None
-    try:
-        _, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        return (err or b"").decode("utf-8", "replace")
-    except (asyncio.TimeoutError, Exception):
+    async with get_ffmpeg_semaphore():
         try:
-            proc.kill()
-            await proc.wait()
-        except Exception:
-            pass
-        return None
+            proc = await asyncio.create_subprocess_exec(
+                *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+        except (FileNotFoundError, Exception):
+            return None
+        try:
+            _, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            return (err or b"").decode("utf-8", "replace")
+        except (asyncio.TimeoutError, Exception):
+            try:
+                proc.kill()
+                await proc.wait()
+            except Exception:
+                pass
+            return None
 
 
 async def measure_keep_ratio(url, headers=None, sample_seconds=4, timeout=15):
     """Fraction of non-duplicate frames in the first `sample_seconds`. None on failure."""
     args = [
         "ffmpeg", "-hide_banner", "-loglevel", "debug",
+        *INPUT_BOUND_ARGS,
         *_header_args(headers),
         "-t", str(sample_seconds), "-i", url,
         "-an", "-vf", "mpdecimate", "-f", "null", "-",
@@ -112,6 +116,7 @@ async def measure_upscale_ssim(url, declared_resolution, lower_resolution,
     )
     args = [
         "ffmpeg", "-hide_banner", "-loglevel", "info",
+        *INPUT_BOUND_ARGS,
         *_header_args(headers),
         "-t", str(sample_seconds), "-i", url,
         "-an", "-lavfi", filtergraph, "-f", "null", "-",
