@@ -439,6 +439,11 @@ class UpdateSource:
             finally:
                 logger.info("Phase: finalizing (saving cache/frozen state)")
                 status.set_phase("finalizing", progress=95)
+                if self.aggregator:
+                    try:
+                        await self.aggregator.flush_once(force=True)
+                    except Exception:
+                        logger.debug("final re-sort flush failed", exc_info=True)
                 if config.open_history:
                     self._save_cache(self.aggregator.result)
                     frozen.save(constants.frozen_path)
