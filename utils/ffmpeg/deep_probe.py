@@ -13,7 +13,7 @@ return None, and the caller leaves the corresponding authenticity factor at 1.0.
 import asyncio
 import re
 
-_MPDECIMATE_DECISION = re.compile(r"\]\s+(keep|drop)\b")
+_MPDECIMATE_DECISION = re.compile(r"\[Parsed_mpdecimate[^\]]*\]\s+(keep|drop)\b")
 
 
 def _parse_mpdecimate_keep_ratio(stderr: str):
