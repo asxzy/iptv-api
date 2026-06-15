@@ -91,3 +91,23 @@ def test_fps_authenticity_genuine_and_unknown():
     assert fps_authenticity(None, 0.5) == 1.0
     assert fps_authenticity(50, None) == 1.0
     assert 0.0 <= fps_authenticity(50, 0.1) <= 1.0
+
+
+def test_resolution_authenticity_upscale_high_ssim_collapses_credit():
+    from utils.authenticity import resolution_authenticity, lower_resolution_tier
+    from utils.scoring import resolution_score
+    a = resolution_authenticity("1920x1080", 0.99, 0.96, 0.985)
+    ratio = resolution_score(lower_resolution_tier("1920x1080")) / resolution_score("1920x1080")
+    assert abs(a - ratio) < 1e-9
+
+
+def test_resolution_authenticity_genuine_low_ssim_is_one():
+    from utils.authenticity import resolution_authenticity
+    assert resolution_authenticity("1920x1080", 0.95, 0.96, 0.985) == 1.0
+
+
+def test_resolution_authenticity_unknown_or_lowest_tier_is_one():
+    from utils.authenticity import resolution_authenticity
+    assert resolution_authenticity(None, 0.99, 0.96, 0.985) == 1.0
+    assert resolution_authenticity("640x360", 0.99, 0.96, 0.985) == 1.0
+    assert resolution_authenticity("1920x1080", None, 0.96, 0.985) == 1.0
