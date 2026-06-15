@@ -398,6 +398,8 @@ class ConfigManager:
             "margin_target": getf("Settings", "ranking_margin_target", fallback=2.0),
             "target_bpp": getf("Settings", "ranking_target_bpp", fallback=0.1),
             "ref_throughput_mbps": getf("Settings", "ranking_ref_throughput_mbps", fallback=10.0),
+            "bpp_prior_floor": getf("Settings", "ranking_bpp_prior_floor", fallback=0.7),
+            "bpp_prior_knee": getf("Settings", "ranking_bpp_prior_knee", fallback=0.3),
         }
 
     @property

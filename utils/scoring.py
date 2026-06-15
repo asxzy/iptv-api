@@ -75,6 +75,9 @@ DEFAULT_WEIGHTS = {
     "margin_target": 2.0,       # throughput/bitrate at which margin saturates to 1
     "target_bpp": 0.1,          # h264-equivalent bits-per-pixel-per-frame "good enough"
     "ref_throughput_mbps": 10.0,  # bitrate-unknown fallback saturation point
+    # anti-fake cheap prior
+    "bpp_prior_floor": 0.7,     # lowest value of the bpp authenticity prior
+    "bpp_prior_knee": 0.3,      # adequacy at/above which the prior is 1.0
 }
 
 
@@ -97,6 +100,22 @@ def encoding_adequacy(resolution, bitrate_bps, fps, video_codec, weights=DEFAULT
     codec_factor = CODEC_EFFICIENCY.get((video_codec or "").lower(), 1.0)
     adjusted_bpp = bpp / codec_factor
     return min(1.0, adjusted_bpp / weights["target_bpp"])
+
+
+def bpp_prior(adequacy, weights=DEFAULT_WEIGHTS):
+    """
+    Cheap metadata-only authenticity prior in [floor, 1.0], derived from encoding
+    adequacy. Low adequacy (bitrate cannot back the claimed pixels/frames) -> mild
+    suspicion. NEUTRAL adequacy (unknown, no bitrate) -> 1.0 (no penalty).
+    """
+    floor = weights["bpp_prior_floor"]
+    knee = weights["bpp_prior_knee"]
+    if adequacy == NEUTRAL:
+        return 1.0
+    if knee <= 0:
+        return 1.0
+    frac = min(1.0, max(0.0, adequacy / knee))
+    return floor + (1.0 - floor) * frac
 
 
 def quality_score(result, weights=DEFAULT_WEIGHTS):

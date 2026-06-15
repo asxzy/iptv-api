@@ -25,3 +25,16 @@ def test_lower_resolution_tier_lowest_and_unknown_return_none():
     assert lower_resolution_tier("640x360") is None
     assert lower_resolution_tier(None) is None
     assert lower_resolution_tier("garbage") is None
+
+
+def test_bpp_prior_bounds():
+    from utils.scoring import bpp_prior, DEFAULT_WEIGHTS
+    assert bpp_prior(0.5, DEFAULT_WEIGHTS) == 1.0
+    assert bpp_prior(0.3, DEFAULT_WEIGHTS) == 1.0
+    assert abs(bpp_prior(0.0, DEFAULT_WEIGHTS) - 0.7) < 1e-9
+    assert abs(bpp_prior(0.15, DEFAULT_WEIGHTS) - 0.85) < 1e-9
+
+
+def test_bpp_prior_neutral_adequacy_is_one():
+    from utils.scoring import bpp_prior, DEFAULT_WEIGHTS, NEUTRAL
+    assert bpp_prior(NEUTRAL, DEFAULT_WEIGHTS) == 1.0
