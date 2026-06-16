@@ -26,11 +26,20 @@
 
 ## Next Features to Implement
 
-### Feature 03: Validation & Filtering
-- Whitelist/blacklist filtering
-- Connectivity checks (HEAD requests)
-- Content-Type validation
-- Event emission for validated/rejected URLs
+### Feature 03: Validation & Filtering ✓
+- **ValidationWorker**: Filters discovered URLs through a 4-stage pipeline
+- **Features**:
+  - Whitelist/blacklist filtering (keyword and regex-based)
+  - Connectivity checks (HEAD requests with configurable timeout/retry)
+  - Content-Type validation (all major media types supported)
+  - Event emission for validated/rejected URLs
+  - Integration with EventBus and GlobalDataStore
+  - Custom headers per source
+  - Concurrent validation with configurable limits
+- **Tests**: 28/28 passing
+- **Key Files**:
+  - `v2/core/workers/validation.py`
+  - `v2/core/tests/test_validation.py`
 
 ### Feature 04: Scan Modes (Fast/Full/Deep)
 - Fast mode: Basic connectivity check
@@ -105,4 +114,4 @@ Continue implementing remaining features following the TDD workflow:
 5. Update TODO documents
 6. Proceed to next feature
 
-Current status: 2/8 features completed (25% complete)
+Current status: 3/8 features completed (37.5% complete)

@@ -23,10 +23,10 @@
 ## Feature 03: Validation & Filtering
 - [x] Spec document
 - [x] TDD document
-- [ ] Implement whitelist/blacklist filtering
-- [ ] Implement connectivity checks
-- [ ] Write tests (aiming for 100% coverage)
-- [ ] Coverage check
+- [x] Implement whitelist/blacklist filtering
+- [x] Implement connectivity checks
+- [x] Write tests (28 tests, all passing)
+- [x] Coverage check
 
 ## Feature 04: Scan Modes (Fast/Full/Deep)
 - [x] Spec document
