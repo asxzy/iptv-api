@@ -13,6 +13,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
+import asyncio
 from collections import defaultdict
 
 from updates.subscribe.request import nested_url_blocked, filter_channel_data_nested_blacklist
@@ -540,6 +541,598 @@ def test_R4_terminal_media_not_fetched():
     fake = FakeFetch(redirects={"http://host/seg.ts": "http://bad.example/backup.m3u8"})
     assert nested_url_blocked("http://host/seg.ts", BLACKLIST, fake) is False
     assert fake.total_calls() == 0, "terminal media must not be fetched"
+
+
+# ---------------------------------------------------------------------------
+# Content-level keyword matching (keywords in non-URI playlist text)
+# ---------------------------------------------------------------------------
+
+def test_C1_content_keyword_in_tvg_id():
+    """A playlist whose EXTINF tvg-id attribute contains a blacklist keyword is blocked
+    even though the segment URI itself is clean."""
+    url = "http://host/play.m3u8"
+    content = '#EXTM3U\n#EXTINF:-1 tvg-id="testvideo" ,Ch\nhttp://host/clean.ts'
+    assert nested_url_blocked(url, ["testvideo"], FakeFetch({url: content})) is True
+
+
+def test_C2_content_keyword_in_extinf_title():
+    """A playlist whose EXTINF title contains a blacklist keyword is blocked."""
+    url = "http://host/play.m3u8"
+    content = '#EXTM3U\n#EXTINF:-1 ,testvideo stream\nhttp://host/clean.ts'
+    assert nested_url_blocked(url, ["testvideo"], FakeFetch({url: content})) is True
+
+
+def test_C3_content_keyword_in_comment():
+    """A playlist with a blacklist keyword in a # comment is blocked."""
+    url = "http://host/play.m3u8"
+    content = '#EXTM3U\n# testvideo comment\n#EXTINF:-1,\nhttp://host/clean.ts'
+    assert nested_url_blocked(url, ["testvideo"], FakeFetch({url: content})) is True
+
+
+def test_C4_clean_content_not_blocked():
+    """A playlist with clean content (no keyword match) is NOT blocked."""
+    url = "http://host/play.m3u8"
+    content = '#EXTM3U\n#EXTINF:-1,\nhttp://host/clean.ts'
+    assert nested_url_blocked(url, ["testvideo"], FakeFetch({url: content})) is False
+
+
+def test_C5_content_keyword_plus_redirect():
+    """A redirect to a playlist whose content has a keyword in metadata is blocked."""
+    live = "http://host/live.php?id=1"
+    real = "http://cdn.example.com/real.m3u8"
+    content = '#EXTM3U\n#EXTINF:-1 tvg-id="testvideo" ,Ch\nhttp://host/clean.ts'
+    assert nested_url_blocked(live, ["testvideo"], FakeFetch(
+        content_map={real: content},
+        redirects={live: real},
+    )) is True
+
+
+def test_C6_live_playlist_without_keyword_not_blocked():
+    """A live/mpegurl playlist with clean content is not blocked (regression)."""
+    url = "http://host/live.m3u8"
+    content = "#EXTM3U\n#EXT-X-TARGETDURATION:10\n#EXTINF:10.0,\nhttp://host/seg.ts\n#EXT-X-ENDLIST"
+    assert nested_url_blocked(url, ["testvideo"], FakeFetch({url: content})) is False
+
+
+# ===========================================================================
+# Phase 2a + 2b: Async versions  (TDD — tests written before implementation)
+# ===========================================================================
+# These tests exercise `nested_url_blocked_async` and
+# `filter_channel_data_nested_blacklist_async`. The conftest.py provides a
+# session-scoped event_loop and the `FakeAsyncFetch` helper.
+# ===========================================================================
+
+import pytest
+
+from conftest import FakeAsyncFetch
+
+try:
+    from updates.subscribe.request import (
+        nested_url_blocked_async,
+        filter_channel_data_nested_blacklist_async,
+    )
+    _ASYNC_IMPORTS_OK = True
+except ImportError:
+    nested_url_blocked_async = None  # type: ignore
+    filter_channel_data_nested_blacklist_async = None  # type: ignore
+    _ASYNC_IMPORTS_OK = False
+
+
+class TestAsyncBlacklist:
+    """All async nested-blacklist tests.
+
+    Skipped entirely if the async implementations haven't been written yet
+    (TDD — tests are authored before implementation).
+    """
+    __test__ = _ASYNC_IMPORTS_OK
+
+    # -----------------------------------------------------------------------
+    # nested_url_blocked_async — same coverage as sync version
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_A1_direct_leaf_hit(self):
+        fake = FakeAsyncFetch()
+        result = await nested_url_blocked_async(
+            "http://x/audio/live.ts", BLACKLIST, fake
+        )
+        assert result is True
+        assert fake.total_calls() == 0
+
+    @pytest.mark.asyncio
+    async def test_A2_clean_non_playlist_leaf(self):
+        fake = FakeAsyncFetch()
+        result = await nested_url_blocked_async(
+            "http://x/live.flv", BLACKLIST, fake
+        )
+        assert result is False
+        assert fake.total_calls() == 0
+
+    @pytest.mark.asyncio
+    async def test_A3_nested_m3u8_all_children_clean(self):
+        content = make_m3u(
+            "http://cdn.example.com/ch1/stream.ts",
+            "http://cdn.example.com/ch2/stream.ts",
+        )
+        fake = FakeAsyncFetch({"http://agg.example.com/list.m3u8": content})
+        result = await nested_url_blocked_async(
+            "http://agg.example.com/list.m3u8", BLACKLIST, fake
+        )
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_A4_nested_m3u8_one_child_blacklisted(self):
+        content = make_m3u(
+            "http://cdn.example.com/ch1/stream.ts",
+            "http://bad.example.com/ch2/stream.ts",
+        )
+        fake = FakeAsyncFetch({"http://agg.example.com/list.m3u8": content})
+        result = await nested_url_blocked_async(
+            "http://agg.example.com/list.m3u8", BLACKLIST, fake
+        )
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_A5_deep_nesting_blocked_at_leaf(self):
+        c_content = make_m3u("http://bad.example.com/stream.ts")
+        b_content = make_m3u("http://host.example.com/C.m3u8")
+        a_content = make_m3u("http://host.example.com/B.m3u8")
+        fake = FakeAsyncFetch({
+            "http://host.example.com/A.m3u8": a_content,
+            "http://host.example.com/B.m3u8": b_content,
+            "http://host.example.com/C.m3u8": c_content,
+        })
+        result = await nested_url_blocked_async(
+            "http://host.example.com/A.m3u8", BLACKLIST, fake
+        )
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_A6_hls_master_clean_variants_recursed(self):
+        master_content = make_hls_master("720.m3u8", "1080.m3u8")
+        base = "http://host.example.com/index.m3u8"
+        fake = FakeAsyncFetch({base: master_content})
+        result = await nested_url_blocked_async(base, BLACKLIST, fake, cache={})
+        assert result is False
+        assert fake.call_counts.get("http://host.example.com/720.m3u8", 0) == 1
+
+    @pytest.mark.asyncio
+    async def test_A6b_hls_media_segments_checked(self):
+        media_content = make_hls_media("seg/audio/0.ts", "seg/audio/1.ts")
+        fake = FakeAsyncFetch(
+            {"http://host.example.com/media.m3u8": media_content}
+        )
+        result = await nested_url_blocked_async(
+            "http://host.example.com/media.m3u8", BLACKLIST, fake, cache={}
+        )
+        assert result is True
+        assert fake.call_counts.get("http://host.example.com/seg/audio/0.ts", 0) == 0
+        assert fake.call_counts.get("http://host.example.com/seg/audio/1.ts", 0) == 0
+
+    @pytest.mark.asyncio
+    async def test_A6c_hls_master_blacklisted_variant_real_repro(self):
+        master_content = (
+            "#EXTM3U\n"
+            "#EXT-X-STREAM-INF:BANDWIDTH=4000000,RESOLUTION=1920x1080\n"
+            "http://files4.3y1.xyz/media/video/nosignal_h264/playlist.m3u8\n"
+        )
+        url = ("https://stream1.freetv.fun/"
+               "df7cf71b3e02015b9029ac087b3eec56fde92fd81d162962570629faec293037.m3u8")
+        variant = "http://files4.3y1.xyz/media/video/nosignal_h264/playlist.m3u8"
+        fake = FakeAsyncFetch({url: master_content})
+        result = await nested_url_blocked_async(url, ["nosignal"], fake, cache={})
+        assert result is True
+        assert fake.call_counts.get(variant, 0) == 0
+
+    @pytest.mark.asyncio
+    async def test_A7_cycle_terminates(self):
+        a_content = make_m3u("http://host.example.com/B.m3u8")
+        b_content = make_m3u("http://host.example.com/A.m3u8")
+        fake = FakeAsyncFetch({
+            "http://host.example.com/A.m3u8": a_content,
+            "http://host.example.com/B.m3u8": b_content,
+        })
+        result = await nested_url_blocked_async(
+            "http://host.example.com/A.m3u8", BLACKLIST, fake
+        )
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_A8_no_depth_limit_deep_chain_blocked(self):
+        mapping = {}
+        chain_len = 10
+        deepest = f"http://host.example.com/level{chain_len}.m3u8"
+        mapping[deepest] = make_m3u("http://bad.example.com/deep.ts")
+        prev = deepest
+        for d in range(chain_len - 1, -1, -1):
+            current = f"http://host.example.com/level{d}.m3u8"
+            mapping[current] = make_m3u(prev)
+            prev = current
+        root = "http://host.example.com/level0.m3u8"
+        fake = FakeAsyncFetch(mapping)
+        result = await nested_url_blocked_async(root, BLACKLIST, fake)
+        assert result is True
+        assert fake.call_counts[
+            f"http://host.example.com/level{chain_len}.m3u8"
+        ] == 1
+
+    @pytest.mark.asyncio
+    async def test_A9_cache_prevents_duplicate_fetches(self):
+        content = make_m3u("http://cdn.example.com/clean.ts")
+        shared_url = "http://shared.example.com/list.m3u8"
+        fake = FakeAsyncFetch({shared_url: content})
+        cache = {}
+
+        r1 = await nested_url_blocked_async(
+            shared_url, BLACKLIST, fake, cache=cache
+        )
+        r2 = await nested_url_blocked_async(
+            shared_url, BLACKLIST, fake, cache=cache
+        )
+
+        assert r1 is False
+        assert r2 is False
+        assert fake.call_counts[shared_url] == 1
+
+    @pytest.mark.asyncio
+    async def test_A10_fetch_failure_not_blocked(self):
+        fake = FakeAsyncFetch({})
+        result = await nested_url_blocked_async(
+            "http://failing.example.com/list.m3u8", BLACKLIST, fake
+        )
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_A11_cycle_with_blacklisted_sibling_shared_cache(self):
+        p_url = "http://host.example.com/P.m3u8"
+        n_url = "http://host.example.com/N.m3u8"
+        p_content = make_m3u(n_url, "http://bad.example.com/X.ts")
+        n_content = make_m3u(p_url)
+        fake = FakeAsyncFetch({p_url: p_content, n_url: n_content})
+        cache = {}
+
+        p_result = await nested_url_blocked_async(
+            p_url, BLACKLIST, fake, cache=cache
+        )
+        n_result = await nested_url_blocked_async(
+            n_url, BLACKLIST, fake, cache=cache
+        )
+
+        assert p_result is True
+        assert n_result is True
+
+    @pytest.mark.asyncio
+    async def test_A12_hls_marker_inside_url_fragment(self):
+        content = (
+            "#EXTM3U\n#EXTINF:-1 ,Bad\n"
+            "http://bad.example/stream.ts#EXT-X-ENDLIST\n"
+        )
+        fake = FakeAsyncFetch({"http://agg.example.com/list.m3u8": content})
+        result = await nested_url_blocked_async(
+            "http://agg.example.com/list.m3u8", ["bad.example"], fake
+        )
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_A13_txt_nested_aggregation(self):
+        bad_content = make_txt(("Chan", "http://bad.example.com/x.ts"))
+        fake_bad = FakeAsyncFetch(
+            {"http://agg.example.com/list.txt": bad_content}
+        )
+        result_bad = await nested_url_blocked_async(
+            "http://agg.example.com/list.txt", BLACKLIST, fake_bad
+        )
+        assert result_bad is True
+
+        clean_content = make_txt(
+            ("Chan1", "http://cdn.example.com/clean1.ts"),
+            ("Chan2", "http://cdn.example.com/clean2.ts"),
+        )
+        fake_clean = FakeAsyncFetch(
+            {"http://agg.example.com/clean.txt": clean_content}
+        )
+        result_clean = await nested_url_blocked_async(
+            "http://agg.example.com/clean.txt", BLACKLIST, fake_clean
+        )
+        assert result_clean is False
+
+    @pytest.mark.asyncio
+    async def test_A14_blacklist_noop(self):
+        content = make_m3u("http://bad.example.com/x.ts")
+        fake = FakeAsyncFetch({"http://agg.example.com/list.m3u8": content})
+
+        r_empty = await nested_url_blocked_async(
+            "http://agg.example.com/list.m3u8", [], fake
+        )
+        assert r_empty is False
+        assert fake.total_calls() == 0
+
+        r_none = await nested_url_blocked_async(
+            "http://agg.example.com/list.m3u8", None, fake
+        )
+        assert r_none is False
+
+    @pytest.mark.asyncio
+    async def test_A15_failed_fetch_verdict_not_cached(self):
+        url = "http://flaky.example.com/list.m3u8"
+        content = make_m3u("http://bad.example.com/stream.ts")
+
+        class FlakyAsyncFetch:
+            def __init__(self):
+                self.calls = 0
+
+            async def __call__(self, u):
+                self.calls += 1
+                if self.calls == 1:
+                    return [], ""
+                return [u], content
+
+        fake = FlakyAsyncFetch()
+        cache = {}
+
+        r1 = await nested_url_blocked_async(url, BLACKLIST, fake, cache=cache)
+        assert r1 is False
+        assert url not in cache
+
+        r2 = await nested_url_blocked_async(url, BLACKLIST, fake, cache=cache)
+        assert r2 is True
+
+    # -----------------------------------------------------------------------
+    # Redirect tests (async)
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_AR1_redirect_target_blacklisted(self):
+        live = "https://iptv.catvod.com/live.php?id=CCTV1&line=14"
+        backup = "https://www.catvod.com/backup.m3u8"
+        fake = FakeAsyncFetch(redirects={live: backup})
+        result = await nested_url_blocked_async(live, ["backup"], fake)
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_AR2_redirect_to_clean_playlist_content_checked(self):
+        live = "https://host.example.com/live.php?id=1"
+        real = "https://cdn.example.com/real.m3u8"
+        fake = FakeAsyncFetch(
+            content_map={real: make_m3u("https://bad.example.com/x.ts")},
+            redirects={live: real},
+        )
+        result = await nested_url_blocked_async(live, BLACKLIST, fake)
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_AR3_clean_redirect_not_blocked(self):
+        live = "https://host.example.com/live.php?id=2"
+        real = "https://cdn.example.com/clean.m3u8"
+        fake = FakeAsyncFetch(
+            content_map={real: make_m3u("https://cdn.example.com/clean.ts")},
+            redirects={live: real},
+        )
+        result = await nested_url_blocked_async(live, BLACKLIST, fake)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_AR4_terminal_media_not_fetched(self):
+        fake = FakeAsyncFetch(
+            redirects={"http://host/seg.ts": "http://bad.example/backup.m3u8"}
+        )
+        result = await nested_url_blocked_async(
+            "http://host/seg.ts", BLACKLIST, fake
+        )
+        assert result is False
+        assert fake.total_calls() == 0
+
+    # -----------------------------------------------------------------------
+    # Async semaphore/concurrency guard
+    # -----------------------------------------------------------------------
+
+    class _DelayedFetch(FakeAsyncFetch):
+        _delay: float
+
+        def __init__(self, delay, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._delay = delay
+
+        async def __call__(self, url):
+            await asyncio.sleep(self._delay)
+            return await super().__call__(url)
+
+    @pytest.mark.asyncio
+    async def test_A_conc_semaphore_limits_concurrency(self):
+        """When concurrency=1 (semaphore=1), a second call must wait for the
+        first to finish, so total wall time >= sum of request delays."""
+        content = make_m3u("http://cdn.example.com/clean1.ts")
+        parallel = "http://host.example.com/outer.m3u8"
+        child_a = "http://host.example.com/inner_a.m3u8"
+        child_b = "http://host.example.com/inner_b.m3u8"
+        fake = self._DelayedFetch(
+            delay=0.1,
+            content_map={
+                parallel: make_m3u(child_a, child_b),
+                child_a: make_m3u("http://cdn.example.com/clean_a.ts"),
+                child_b: make_m3u("http://cdn.example.com/clean_b.ts"),
+            },
+        )
+
+        t0 = asyncio.get_running_loop().time()
+        result = await nested_url_blocked_async(
+            parallel, BLACKLIST, fake,
+            semaphore=asyncio.Semaphore(1),
+        )
+        elapsed = asyncio.get_running_loop().time() - t0
+
+        assert result is False
+        assert elapsed >= 0.19, (
+            f"Expected sequential execution >= 0.19s with semaphore=1, "
+            f"got {elapsed:.3f}s"
+        )
+
+    # -----------------------------------------------------------------------
+    # filter_channel_data_nested_blacklist_async tests
+    # -----------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_AF1_blacklisted_removed_clean_kept(self):
+        blacklisted_url = "http://agg.example.com/list.m3u8"
+        clean_url = "http://cdn.example.com/clean.ts"
+        bad_content = make_m3u("http://bad.example.com/stream.ts")
+        fake = FakeAsyncFetch({blacklisted_url: bad_content})
+        make_fetch = lambda headers: fake  # noqa: E731
+
+        channel_data = _make_channel_data(
+            ("Cat1", "Chan1", blacklisted_url, "subscribe", None),
+            ("Cat1", "Chan2", clean_url, "subscribe", None),
+        )
+        removed = await filter_channel_data_nested_blacklist_async(
+            channel_data, BLACKLIST, make_fetch
+        )
+        assert removed == 1
+        assert channel_data["Cat1"]["Chan1"] == []
+        assert len(channel_data["Cat1"]["Chan2"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_AF2_retain_origin_exempt(self):
+        blacklisted_url = "http://agg.example.com/list.m3u8"
+        bad_content = make_m3u("http://bad.example.com/stream.ts")
+        fake = FakeAsyncFetch({blacklisted_url: bad_content})
+        make_fetch = lambda headers: fake  # noqa: E731
+
+        channel_data = _make_channel_data(
+            ("Cat1", "Chan1", blacklisted_url, "whitelist", None),
+        )
+        removed = await filter_channel_data_nested_blacklist_async(
+            channel_data, BLACKLIST, make_fetch,
+            retain_origin=("whitelist", "hls"),
+        )
+        assert removed == 0
+        assert len(channel_data["Cat1"]["Chan1"]) == 1
+        assert fake.total_calls() == 0
+
+    @pytest.mark.asyncio
+    async def test_AF3_empty_blacklist_noop(self):
+        url = "http://agg.example.com/list.m3u8"
+        bad_content = make_m3u("http://bad.example.com/stream.ts")
+        fake = FakeAsyncFetch({url: bad_content})
+        make_fetch = lambda headers: fake  # noqa: E731
+
+        channel_data = _make_channel_data(
+            ("Cat1", "Chan1", url, "subscribe", None)
+        )
+        original_len = len(channel_data["Cat1"]["Chan1"])
+
+        r1 = await filter_channel_data_nested_blacklist_async(
+            channel_data, None, make_fetch
+        )
+        assert r1 == 0
+        assert len(channel_data["Cat1"]["Chan1"]) == original_len
+        assert fake.total_calls() == 0
+
+        r2 = await filter_channel_data_nested_blacklist_async(
+            channel_data, [], make_fetch
+        )
+        assert r2 == 0
+        assert fake.total_calls() == 0
+
+    @pytest.mark.asyncio
+    async def test_AF4_real_world_nosignal_repro(self):
+        master_url = (
+            "https://stream1.freetv.fun/"
+            "df7cf71b3e02015b9029ac087b3eec56fde92fd81d162962570629faec293037.m3u8"
+        )
+        master_content = (
+            "#EXTM3U\n"
+            "#EXT-X-STREAM-INF:BANDWIDTH=4000000,RESOLUTION=1920x1080\n"
+            "http://files4.3y1.xyz/media/video/nosignal_h264/playlist.m3u8\n"
+        )
+        fake = FakeAsyncFetch({master_url: master_content})
+        make_fetch = lambda headers: fake  # noqa: E731
+
+        channel_data = _make_channel_data(
+            ("Sports", "SomeChannel", master_url, "subscribe", None),
+        )
+        removed = await filter_channel_data_nested_blacklist_async(
+            channel_data, ["nosignal"], make_fetch,
+            retain_origin=("whitelist", "hls"),
+        )
+        assert removed == 1
+        assert channel_data["Sports"]["SomeChannel"] == []
+
+    @pytest.mark.asyncio
+    async def test_AF5_history_recheck_catches_base_pass_miss(self):
+        master_url = (
+            "https://stream1.freetv.fun/"
+            "df7cf71b3e02015b9029ac087b3eec56fde92fd81d162962570629faec293037.m3u8"
+        )
+        master_content = (
+            "#EXTM3U\n"
+            "#EXT-X-STREAM-INF:BANDWIDTH=4000000,RESOLUTION=1920x1080\n"
+            "http://files4.3y1.xyz/media/video/nosignal_h264/playlist.m3u8\n"
+        )
+
+        class FlakyAsyncFetch:
+            def __init__(self):
+                self.calls = 0
+
+            async def __call__(self, u):
+                self.calls += 1
+                if self.calls == 1:
+                    return [], ""
+                return [u], master_content
+
+        fake = FlakyAsyncFetch()
+        make_fetch = lambda headers: fake  # noqa: E731
+        shared_cache = {}
+
+        base = _make_channel_data(
+            ("Sports", "CCTV5", master_url, "subscribe", None)
+        )
+        history = _make_channel_data(
+            ("Sports", "CCTV5", master_url, "subscribe", None)
+        )
+
+        removed_base = await filter_channel_data_nested_blacklist_async(
+            base, ["nosignal"], make_fetch,
+            cache=shared_cache, show_progress=False,
+        )
+        assert removed_base == 0
+
+        removed_hist = await filter_channel_data_nested_blacklist_async(
+            history, ["nosignal"], make_fetch,
+            cache=shared_cache, show_progress=False,
+        )
+        assert removed_hist == 1
+        assert history["Sports"]["CCTV5"] == []
+
+    @pytest.mark.asyncio
+    async def test_AF_conc_parallel_execution(self):
+        """With unlimited concurrency, parallel tasks complete faster than
+        sequential (wall-clock test)."""
+        fast = "http://host.example.com/fast.m3u8"
+        slow = "http://host.example.com/slow.m3u8"
+        fake = self._DelayedFetch(
+            delay=0.2,
+            content_map={
+                fast: make_m3u("http://cdn.example.com/clean.ts"),
+                slow: make_m3u("http://cdn.example.com/clean.ts"),
+            },
+        )
+        make_fetch = lambda headers: fake  # noqa: E731
+        channel_data = _make_channel_data(
+            ("Cat", "Fast", fast, "subscribe", None),
+            ("Cat", "Slow", slow, "subscribe", None),
+        )
+
+        t0 = asyncio.get_running_loop().time()
+        removed = await filter_channel_data_nested_blacklist_async(
+            channel_data, BLACKLIST, make_fetch, max_workers=2
+        )
+        elapsed = asyncio.get_running_loop().time() - t0
+
+        assert removed == 0
+        assert elapsed < 0.35, (
+            f"Expected parallel execution < 0.35s with 2 workers, "
+            f"got {elapsed:.3f}s"
+        )
 
 
 # ---------------------------------------------------------------------------
