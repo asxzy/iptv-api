@@ -11,3 +11,27 @@ docs/images
 .gitignore
 .gitattributes
 utils/nginx-rtmp-win32
+
+# Runtime data (generated at runtime)
+output/
+
+# Bytecode cache
+__pycache__/
+*.pyc
+
+# Test & CI artifacts
+tests/
+.pytest_cache/
+
+# Agent workspace
+.sisyphus/
+
+# Local development artifacts
+.debugvenv/
+debug_*.py
+build_all.py
+Makefile
+
+# Docker compose files (not used inside image)
+docker-compose*
+nginx.conf

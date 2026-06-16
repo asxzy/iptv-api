@@ -1,71 +1,95 @@
-FROM python:3.13-alpine AS builder
+# ============================================================
+# Stage 1: Build nginx with RTMP module
+# Uses plain alpine (no Python needed for compilation)
+# ============================================================
+FROM alpine:3.21 AS nginx-builder
 
-ARG APP_WORKDIR=/iptv-api
 ARG NGINX_VER=1.27.4
 ARG RTMP_VER=1.2.2
 
-WORKDIR $APP_WORKDIR
+RUN apk update && apk add --no-cache \
+  wget make pcre-dev openssl-dev zlib-dev gcc musl-dev
 
-COPY Pipfile* ./
-
-RUN apk update && apk add --no-cache gcc musl-dev python3-dev libffi-dev zlib-dev jpeg-dev wget make pcre-dev openssl-dev \
-  && pip install pipenv \
-  && PIPENV_VENV_IN_PROJECT=1 pipenv install --deploy
-
-RUN wget https://nginx.org/download/nginx-${NGINX_VER}.tar.gz && \
-    tar xzf nginx-${NGINX_VER}.tar.gz
-
-RUN wget https://github.com/arut/nginx-rtmp-module/archive/v${RTMP_VER}.tar.gz && \
-    tar xzf v${RTMP_VER}.tar.gz
-
-WORKDIR $APP_WORKDIR/nginx-${NGINX_VER}
-RUN ./configure \
-    --add-module=$APP_WORKDIR/nginx-rtmp-module-${RTMP_VER} \
+# Cache mount persists nginx source archives across rebuilds
+RUN --mount=type=cache,target=/var/cache/nginx \
+  wget -nc https://nginx.org/download/nginx-${NGINX_VER}.tar.gz -P /var/cache/nginx && \
+  wget -nc https://github.com/arut/nginx-rtmp-module/archive/v${RTMP_VER}.tar.gz -P /var/cache/nginx && \
+  tar xzf /var/cache/nginx/nginx-${NGINX_VER}.tar.gz -C /tmp && \
+  tar xzf /var/cache/nginx/v${RTMP_VER}.tar.gz -C /tmp && \
+  cd /tmp/nginx-${NGINX_VER} && \
+  ./configure \
+    --add-module=/tmp/nginx-rtmp-module-${RTMP_VER} \
     --conf-path=/etc/nginx/nginx.conf \
     --error-log-path=/var/log/nginx/error.log \
     --http-log-path=/var/log/nginx/access.log \
     --with-http_ssl_module && \
-    make && \
-    make install
+  make -j$(nproc) && \
+  make install
 
+# ============================================================
+# Stage 2: Install Python dependencies into .venv
+# ============================================================
+FROM python:3.13-alpine AS python-builder
+
+ARG APP_WORKDIR=/iptv-api
+
+WORKDIR $APP_WORKDIR
+
+COPY Pipfile Pipfile.lock ./
+
+RUN apk add --no-cache gcc musl-dev python3-dev libffi-dev zlib-dev jpeg-dev
+
+# Cache mount saves pip download cache between builds
+RUN --mount=type=cache,target=/root/.cache/pip \
+  pip install pipenv && \
+  PIPENV_VENV_IN_PROJECT=1 pipenv install --deploy
+
+# ============================================================
+# Stage 3: Final runtime image
+# ============================================================
 FROM python:3.13-alpine
 
 ARG APP_WORKDIR=/iptv-api
 
-ENV APP_WORKDIR=$APP_WORKDIR
-ENV APP_PORT=5180
-ENV NGINX_HTTP_PORT=8080
-ENV NGINX_RTMP_PORT=1935
-ENV PUBLIC_PORT=80
-ENV PATH="$APP_WORKDIR/.venv/bin:/usr/local/nginx/sbin:$PATH"
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONIOENCODING=utf-8
+ENV APP_WORKDIR=$APP_WORKDIR \
+    APP_PORT=5180 \
+    NGINX_HTTP_PORT=8080 \
+    NGINX_RTMP_PORT=1935 \
+    PUBLIC_PORT=80 \
+    PATH="$APP_WORKDIR/.venv/bin:/usr/local/nginx/sbin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONIOENCODING=utf-8
 
 WORKDIR $APP_WORKDIR
 
-COPY . $APP_WORKDIR
+# Runtime system dependencies (changes rarely → early for cache)
+RUN apk add --no-cache ffmpeg pcre
 
-COPY --from=builder $APP_WORKDIR/.venv $APP_WORKDIR/.venv
-COPY --from=builder /usr/local/nginx /usr/local/nginx
+# Nginx log setup
+RUN mkdir -p /var/log/nginx /usr/local/nginx/html && \
+    ln -sf /dev/stdout /var/log/nginx/access.log && \
+    ln -sf /dev/stderr /var/log/nginx/error.log
 
-RUN mkdir -p /var/log/nginx && \
-  ln -sf /dev/stdout /var/log/nginx/access.log && \
-  ln -sf /dev/stderr /var/log/nginx/error.log
+# Build artifacts from previous stages
+COPY --from=nginx-builder /usr/local/nginx /usr/local/nginx
+COPY --from=python-builder $APP_WORKDIR/.venv $APP_WORKDIR/.venv
 
-RUN apk update && apk add --no-cache ffmpeg pcre
+# Application source code (explicit paths for cache efficiency)
+COPY main.py favicon.ico version.json ./
+COPY utils/ utils/
+COPY service/ service/
+COPY updates/ updates/
+COPY locales/ locales/
+COPY config/ config/
 
-EXPOSE $NGINX_HTTP_PORT
-
-COPY entrypoint.sh /iptv-api-entrypoint.sh
-
+# Default config templates (copied to separate dir, used on first run)
 COPY config /iptv-api-config
-
+COPY entrypoint.sh /iptv-api-entrypoint.sh
 COPY nginx.conf.template /etc/nginx/nginx.conf.template
-
-RUN mkdir -p /usr/local/nginx/html
-
 COPY stat.xsl /usr/local/nginx/html/stat.xsl
 
 RUN chmod +x /iptv-api-entrypoint.sh
 
-ENTRYPOINT /iptv-api-entrypoint.sh
+EXPOSE $NGINX_HTTP_PORT
+
+ENTRYPOINT ["/iptv-api-entrypoint.sh"]
