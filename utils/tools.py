@@ -285,8 +285,9 @@ def get_total_urls(
             origin = "all"
 
         if ipv_prefer_bool:
-            if url_ipv_type in ipv_type_prefer:
-                categorized_urls[origin][url_ipv_type].append(info)
+            ipv = url_ipv_type or "ipv4"
+            if ipv in ipv_type_prefer:
+                categorized_urls[origin][ipv].append(info)
         else:
             categorized_urls[origin]["all"].append(info)
 
@@ -590,6 +591,18 @@ def get_result_file_content(path=None, show_content=False, file_type=None, merge
         if file_type
         else path
     )
+    try:
+        from utils.result_store import result_store as _rs
+        cached = _rs.get(result_file)
+        if cached is not None:
+            content = cached
+            if merge_source:
+                content = merge_txt_multi_source(content)
+            response = make_response(content)
+            response.mimetype = 'text/plain'
+            return response
+    except Exception:
+        pass
     if os.path.exists(result_file):
         if config.open_m3u_result:
             if file_type == "m3u" or not file_type:
