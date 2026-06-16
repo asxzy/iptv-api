@@ -23,3 +23,9 @@
 # adbreak
 # re:/(ads?|commercial)/
 # re:\.ad\d+\.ts$
+
+nosignal
+no_signal
+backup
+applive
+testvideo
