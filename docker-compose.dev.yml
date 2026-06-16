@@ -1,0 +1,38 @@
+services:
+  iptv-api-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: iptv-api-dev
+    restart: unless-stopped
+    tty: true
+    stdin_open: true
+    ports:
+      - "8888:8080"
+    volumes:
+      # Source code mounts for hot reload (no rebuild needed on edits)
+      - ./main.py:/iptv-api/main.py
+      - ./utils:/iptv-api/utils
+      - ./updates:/iptv-api/updates
+      - ./service:/iptv-api/service
+      - ./locales:/iptv-api/locales
+      - ./tkinter_ui:/iptv-api/tkinter_ui
+      # Config mounts (individual files to allow subscribe.dev.txt override)
+      - ./config/config.ini:/iptv-api/config/config.ini
+      - ./config/demo.txt:/iptv-api/config/demo.txt
+      - ./config/alias.txt:/iptv-api/config/alias.txt
+      - ./config/blacklist.txt:/iptv-api/config/blacklist.txt
+      - ./config/whitelist.txt:/iptv-api/config/whitelist.txt
+      - ./config/epg.txt:/iptv-api/config/epg.txt
+      - ./config/local.txt:/iptv-api/config/local.txt
+      - ./config/logo:/iptv-api/config/logo
+      - ./config/hls:/iptv-api/config/hls
+      - ./config/local:/iptv-api/config/local
+      # Dev subscribe source (overrides subscribe.txt)
+      - ./config/subscribe.dev.txt:/iptv-api/config/subscribe.txt
+      # Output persistence
+      - ./output:/iptv-api/output
+    environment:
+      PUBLIC_SCHEME: "http"
+      PUBLIC_DOMAIN: "127.0.0.1"
+      PUBLIC_PORT: "80"
