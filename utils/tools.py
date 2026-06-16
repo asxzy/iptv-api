@@ -254,11 +254,11 @@ def get_total_urls(
     total_urls = []
     for info in info_list:
         channel_id, url, origin, resolution, url_ipv_type, extra_info = (
-            info["id"],
+            info.get("id", hash(info.get("url", ""))),
             info["url"],
             info["origin"],
-            info["resolution"],
-            info["ipv_type"],
+            info.get("resolution"),
+            info.get("ipv_type"),
             info.get("extra_info", ""),
         )
         if not origin:

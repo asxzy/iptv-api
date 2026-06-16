@@ -1145,7 +1145,7 @@ def process_write_content(
                 item_url = item["url"]
                 if open_url_info and item["extra_info"]:
                     item_url = add_url_info(item_url, item["extra_info"])
-                total_item_url = f"{hls_url}/{item['id']}.m3u8" if hls_url else item_url
+                total_item_url = f"{hls_url}/{item.get('id', hash(item.get('url', '')))}.m3u8" if hls_url else item_url
                 content += f"\n{name},{total_item_url}"
     if open_empty_category and no_result_name and is_last:
         custom_print(f"\n{t("msg.no_result_channel")}")
@@ -1172,7 +1172,7 @@ def process_write_content(
         update_title = t("content.update_time") if is_last else t("content.update_running")
         if open_url_info and update_time_item["extra_info"]:
             update_time_item_url = add_url_info(update_time_item_url, update_time_item["extra_info"])
-        value = f"{hls_url}/{update_time_item["id"]}.m3u8" if hls_url else update_time_item_url
+        value = f"{hls_url}/{update_time_item.get('id', hash(update_time_item.get('url', '')))}.m3u8" if hls_url else update_time_item_url
         if config.update_time_position == "top":
             content = f"{update_title},#genre#\n{now},{value}\n\n{content}"
         else:
