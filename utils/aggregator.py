@@ -140,17 +140,16 @@ class ResultAggregator:
 
                 partial_result[cate][name] = list(test_copy.get(cate, {}).get(name, []))
 
-                if (cate, name) not in finished:
-                    prev_sorted = self.result.get(cate, {}).get(name, [])
-                    seen = {it.get("url") for it in partial_result[cate][name] if
-                            isinstance(it, dict) and it.get("url")}
-                    for item in prev_sorted:
-                        if not isinstance(item, dict):
-                            continue
-                        url = item.get("url")
-                        if url and url not in seen and item.get("origin") not in retain_origin:
-                            partial_result[cate][name].append(item)
-                            seen.add(url)
+                prev_sorted = self.result.get(cate, {}).get(name, [])
+                seen = {it.get("url") for it in partial_result[cate][name] if
+                        isinstance(it, dict) and it.get("url")}
+                for item in prev_sorted:
+                    if not isinstance(item, dict):
+                        continue
+                    url = item.get("url")
+                    if url and url not in seen and item.get("origin") not in retain_origin:
+                        partial_result[cate][name].append(item)
+                        seen.add(url)
             try:
                 if len(affected) == 1:
                     cate_single, name_single = next(iter(affected))
@@ -170,6 +169,25 @@ class ResultAggregator:
             except Exception:
                 new_sorted = defaultdict(lambda: defaultdict(list))
         else:
+            # Force flush: inject cached results from self.result into
+            # test_copy so they participate in re-ranking alongside new
+            # subscribe/template results.  Cache entries are NOT in
+            # test_results (they live in self.result from aggregator init),
+            # so they'd be silently dropped by the overwrite at line 197
+            # without this merge.
+            for cate, names in list(self.result.items()):
+                for name, items in list(names.items()):
+                    existing = test_copy.get(cate, {}).get(name)
+                    if existing is None:
+                        continue
+                    existing_urls = {it.get("url") for it in existing
+                                    if isinstance(it, dict) and it.get("url")}
+                    for item in items:
+                        if (isinstance(item, dict)
+                                and item.get("url")
+                                and item["url"] not in existing_urls):
+                            existing.append(item)
+                            existing_urls.add(item["url"])
             try:
                 new_sorted = sort_channel_result(
                     self.base_data, result=test_copy, filter_host=speed_test_filter_host,
@@ -201,6 +219,13 @@ class ResultAggregator:
             True,
             self.is_last,
         )
+
+        # Push merged result to shared in-memory store for live serving
+        try:
+            from utils.result_store import result_store as _rs
+            _rs.store_data(merged)
+        except Exception:
+            pass
 
         self.result = merged
 
