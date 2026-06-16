@@ -677,7 +677,7 @@ def append_total_data(
                         blacklist=blacklist,
                         ipv_type_data=url_hosts_ipv_type
                     )
-                    logger.debug("  %s: %d", t(f"name.{method}"), len(name_results))
+                    logger.debug("%s: %d", t(f"name.{method}"), len(name_results))
             print_channel_number(data, cate, name)
 
     if config.open_unmatch_category and subscribe_result:
@@ -1041,12 +1041,28 @@ def generate_channel_statistic(logger, cate, name, values):
     most_video_str = most_video[0][0] if most_video else t('name.unknown')
     most_audio_str = most_audio[0][0] if most_audio else t('name.unknown')
     avg_fps = (sum(fps_values) / len(fps_values)) if fps_values else None
+    fps_str = f"{avg_fps:.2f}" if avg_fps is not None else t('name.unknown')
+    header = f"{t('name.category')}: {cate} | {t('name.name')}: {name}"
     if config.open_full_speed_test:
-        content = f"{f"{t('name.category')}: {cate}, {t('name.name')}: {name}, {t('name.total')}: {total}, {t('name.valid')}: {valid}, {t('name.valid_percent')}: {valid_rate:.2f}%, IPv4: {ipv4_count}, IPv6: {ipv6_count}, {t('name.min_delay')}: {min_delay} ms, {t('name.max_speed')}: {max_speed:.2f} M/s, {t('name.average_speed')}: {avg_speed:.2f} M/s, {t('name.max_resolution')}: {max_resolution}, {t('name.avg_fps')}: {f"{avg_fps:.2f}" if avg_fps is not None else t('name.unknown')}, {t('name.video_codec')}: {most_video_str}, {t('name.audio_codec')}: {most_audio_str}"}"
-        logger.info(content)
+        logger.info("%s | %s: %d | %s: %d | %s: %.2f%% | IPv4: %d | IPv6: %d",
+                    header,
+                    t('name.total'), total,
+                    t('name.valid'), valid,
+                    t('name.valid_percent'), valid_rate,
+                    ipv4_count, ipv6_count)
     else:
-        content = f"{f"{t('name.category')}: {cate}, {t('name.name')}: {name}, {t('name.valid')}: {valid}, IPv4: {ipv4_count}, IPv6: {ipv6_count}, {t('name.min_delay')}: {min_delay} ms, {t('name.max_speed')}: {max_speed:.2f} M/s, {t('name.average_speed')}: {avg_speed:.2f} M/s, {t('name.max_resolution')}: {max_resolution}, {t('name.avg_fps')}: {f"{avg_fps:.2f}" if avg_fps is not None else t('name.unknown')}, {t('name.video_codec')}: {most_video_str}, {t('name.audio_codec')}: {most_audio_str}"}"
-        logger.info(content)
+        logger.info("%s | %s: %d | IPv4: %d | IPv6: %d",
+                    header,
+                    t('name.valid'), valid,
+                    ipv4_count, ipv6_count)
+    logger.info("  %s: %d ms | %s: %.2f M/s | %s: %.2f M/s | %s: %s | %s: %s | %s: %s | %s: %s",
+                t('name.min_delay'), min_delay,
+                t('name.max_speed'), max_speed,
+                t('name.average_speed'), avg_speed,
+                t('name.max_resolution'), max_resolution,
+                t('name.avg_fps'), fps_str,
+                t('name.video_codec'), most_video_str,
+                t('name.audio_codec'), most_audio_str)
 
 
 def process_write_content(
