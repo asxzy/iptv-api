@@ -41,11 +41,18 @@
   - `v2/core/workers/validation.py`
   - `v2/core/tests/test_validation.py`
 
-### Feature 04: Scan Modes (Fast/Full/Deep)
-- Fast mode: Basic connectivity check
-- Full mode: Speed test + basic media properties
-- Deep mode: Quality analysis + upscale detection
-- Parallel workers with configurable concurrency
+### Feature 04: Scan Modes (Fast/Full/Deep) ✓
+- **FastScanWorker**: Quick connectivity check + content type validation (<5s per source)
+- **FullScanWorker**: Speed test (partial download) + ffprobe media properties (10-15s)
+- **DeepScanWorker**: Quality analysis + upscale detection via bitrate-per-pixel heuristics (30-60s)
+- **ScanOrchestrator**: Coordinates multi-mode scans with progressive result availability
+- **Event Emission**: ScanStartedEvent, FastScanCompleteEvent, FullScanCompleteEvent, DeepScanCompleteEvent, ScanErrorEvent
+- **Resource Management**: Global semaphore limits concurrent FFmpeg/ffprobe processes
+- **Integration**: Full integration with EventBus and GlobalDataStore
+- **Tests**: 66/66 passing (scan.py: 92% coverage)
+- **Key Files**:
+  - `v2/core/workers/scan.py` - All scan workers + orchestrator
+  - `v2/core/tests/test_scan_modes.py` - 66 comprehensive tests
 
 ### Feature 05: Scoring Component
 - Quality scoring (resolution, fps, codec)
@@ -114,4 +121,4 @@ Continue implementing remaining features following the TDD workflow:
 5. Update TODO documents
 6. Proceed to next feature
 
-Current status: 3/8 features completed (37.5% complete)
+Current status: 4/8 features completed (50% complete)

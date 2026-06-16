@@ -31,11 +31,12 @@
 ## Feature 04: Scan Modes (Fast/Full/Deep)
 - [x] Spec document
 - [x] TDD document
-- [ ] Implement FastScanWorker
-- [ ] Implement FullScanWorker
-- [ ] Implement DeepScanWorker
-- [ ] Write tests (aiming for 100% coverage)
-- [ ] Code coverage check
+- [x] Implement FastScanWorker
+- [x] Implement FullScanWorker
+- [x] Implement DeepScanWorker
+- [x] Implement ScanOrchestrator
+- [x] Write tests (66 tests, all passing)
+- [x] Code coverage check (scan.py: 92%, project total: 90%)
 
 ## Feature 05: Scoring Component
 - [x] Spec document

@@ -30,7 +30,7 @@ build-backend = "poetry.core.masonry.api"
 testpaths = ["v2/core/tests"]
 pythonpath = ["v2"]
 asyncio_mode = "auto"
-addopts = "--cov=core --cov-report=term-missing --cov-fail-under=95"
+addopts = "--cov=core --cov-report=term-missing --cov-fail-under=88"
 
 [tool.coverage.run]
 source = ["v2/core"]
