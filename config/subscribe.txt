@@ -2,6 +2,8 @@
 # 支持设置UA：https://xxx.com/subscribe.m3u UA="xxx"
 # This is a list of subscription sources, with one subscription address per line
 # Supports setting UA: https://xxx.com/subscribe.m3u UA="xxx"
+# Local test upstream
+http://192.168.1.198:8888
 https://raw.githubusercontent.com/Guovin/iptv-api/gd/output/result.m3u
 https://iptv-org.github.io/iptv/countries/cn.m3u
 https://raw.githubusercontent.com/CCSH/IPTV/main/live.m3u
