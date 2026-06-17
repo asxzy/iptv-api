@@ -139,11 +139,19 @@ class BaseScanWorker(ABC):
                 ).with_trace(trace),
             )
 
-            metrics = await self._run_scan(media_source, trace)
+            # Always load the latest version from store before scanning
+            station = await self.store.get_station(media_source.station_name)
+            latest_source = (
+                station.sources.get(media_source.url)
+                if station
+                else None
+            ) or media_source
+
+            metrics = await self._run_scan(latest_source, trace)
 
             if metrics is not None:
                 updated = (
-                    media_source
+                    latest_source
                     .with_status(self.target_status)
                     .with_metrics(metrics)
                 )
@@ -151,7 +159,7 @@ class BaseScanWorker(ABC):
                 await self._emit_complete(updated, metrics, trace)
                 return True
 
-            failed = media_source.with_status(MediaStatus.FAILED)
+            failed = latest_source.with_status(MediaStatus.FAILED)
             await self.store.add_or_update_source(failed)
             return False
 
@@ -247,6 +255,7 @@ class BaseScanWorker(ABC):
         timeout: float = 10.0,
     ) -> Optional[Dict[str, Any]]:
         """Low-level ffprobe execution without the semaphore."""
+        proc = None
         try:
             cmd = [
                 "ffprobe",
@@ -275,9 +284,15 @@ class BaseScanWorker(ABC):
             return json.loads(stdout.decode())
         except asyncio.TimeoutError:
             logger.debug("ffprobe timed out for %s", url)
+            if proc:
+                proc.kill()
+                await proc.wait()
             return None
         except Exception as e:
             logger.debug("ffprobe error for %s: %s", url, e)
+            if proc:
+                proc.kill()
+                await proc.wait()
             return None
 
     @staticmethod

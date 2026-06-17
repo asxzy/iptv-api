@@ -11,9 +11,6 @@ import tempfile
 import os
 from unittest.mock import AsyncMock, MagicMock
 
-import sys
-sys.path.insert(0, '/Users/asxzy/src/iptv-api/v2')
-
 from core.workers.discovery import DiscoveryWorker
 from core.bus import EventBus
 from core.events import MediaSourceDiscoveredEvent, StationDiscoveredEvent, DiscoveryErrorEvent

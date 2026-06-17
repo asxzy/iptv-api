@@ -8,9 +8,6 @@ import pytest
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
-import sys
-sys.path.insert(0, '/Users/asxzy/src/iptv-api/v2')
-
 from core.workers.proxy import (
     ProxyInspector,
     AdFilter,

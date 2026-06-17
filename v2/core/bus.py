@@ -7,6 +7,7 @@ Supports typed events, multiple subscribers, and graceful shutdown.
 
 import asyncio
 import logging
+import threading
 from typing import Dict, List, Callable, Type, Any, Optional
 from collections import defaultdict
 from .events import Event
@@ -17,16 +18,17 @@ logger = logging.getLogger(__name__)
 class EventBus:
     """
     Async event bus with typed pub/sub support.
-    
+
     Each event type has its own queue to prevent one slow subscriber
     from blocking other event types.
     """
-    
+
     def __init__(self, max_queue_size: int = 1000):
         self._subscribers: Dict[Type[Event], List[asyncio.Queue]] = defaultdict(list)
         self._all_subscribers: List[asyncio.Queue] = []
         self._max_queue_size = max_queue_size
         self._running = True
+        self._subscriber_lock = threading.Lock()  # Protects _subscribers and _all_subscribers
         self._metrics = {
             'published': 0,
             'delivered': 0,
@@ -63,22 +65,25 @@ class EventBus:
     def subscribe(self, event_type: Type[Event]) -> asyncio.Queue:
         """Subscribe to a specific event type. Returns a queue to consume from."""
         queue: asyncio.Queue = asyncio.Queue(maxsize=self._max_queue_size)
-        self._subscribers[event_type].append(queue)
+        with self._subscriber_lock:
+            self._subscribers[event_type].append(queue)
         return queue
-    
+
     def subscribe_all(self) -> asyncio.Queue:
         """Subscribe to all events. Returns a queue to consume from."""
         queue: asyncio.Queue = asyncio.Queue(maxsize=self._max_queue_size)
-        self._all_subscribers.append(queue)
+        with self._subscriber_lock:
+            self._all_subscribers.append(queue)
         return queue
-    
+
     def unsubscribe(self, event_type: Type[Event], queue: asyncio.Queue) -> None:
         """Unsubscribe from an event type."""
-        if event_type in self._subscribers:
-            try:
-                self._subscribers[event_type].remove(queue)
-            except ValueError:
-                pass
+        with self._subscriber_lock:
+            if event_type in self._subscribers:
+                try:
+                    self._subscribers[event_type].remove(queue)
+                except ValueError:
+                    pass
     
     def get_metrics(self) -> Dict[str, int]:
         """Return current bus metrics."""

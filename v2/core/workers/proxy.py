@@ -119,8 +119,8 @@ class AdFilter:
         for line in lines:
             stripped = line.strip()
 
-            # Handle CUE-OUT markers
-            if stripped == "#EXT-X-CUE-OUT":
+            # Handle CUE-OUT markers (exact match or with attributes like DURATION=30)
+            if stripped.startswith("#EXT-X-CUE-OUT"):
                 if self.drop_cue_ads:
                     in_cue_block = True
                     # Don't add the CUE-OUT to output
@@ -131,7 +131,7 @@ class AdFilter:
                     output.append(line)
                 continue
 
-            if stripped == "#EXT-X-CUE-IN":
+            if stripped.startswith("#EXT-X-CUE-IN"):
                 if self.drop_cue_ads:
                     in_cue_block = False
                     # Drop all buffered content from ad block
@@ -144,8 +144,8 @@ class AdFilter:
             if in_cue_block:
                 continue
 
-            # Handle DISCONTINUITY
-            if stripped == "#EXT-X-DISCONTINUITY":
+            # Handle DISCONTINUITY (exact match or with attributes)
+            if stripped.startswith("#EXT-X-DISCONTINUITY") and not stripped.startswith("#EXT-X-DISCONTINUITY-SEQUENCE"):
                 if self.drop_discontinuity_ads and in_discontinuity_block:
                     # Check if the current discontinuity block has ads
                     block_uris = [

@@ -9,10 +9,7 @@ import asyncio
 import os
 import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime
-
-import sys
-sys.path.insert(0, '/Users/asxzy/src/iptv-api/v2')
+from datetime import datetime, timezone
 
 from core.workers.orchestrator import Orchestrator
 from core.bus import EventBus
@@ -40,8 +37,8 @@ def make_source(
         metrics=MediaMetrics(),
         status=status,
         score=0.0,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
     )
 
 

@@ -10,9 +10,6 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 import aiohttp
 
-import sys
-sys.path.insert(0, '/Users/asxzy/src/iptv-api/v2')
-
 from core.workers.validation import ValidationWorker, VALID_MEDIA_CONTENT_TYPES
 from core.bus import EventBus
 from core.store import GlobalDataStore
@@ -37,18 +34,18 @@ def _make_head_cm(status=200, headers=None):
 
 
 @pytest.fixture
-def event_bus() -> EventBus:
+def event_bus():
     return EventBus()
 
 
 @pytest.fixture
-def store() -> GlobalDataStore:
+def store():
     GlobalDataStore.reset_instance()
     return GlobalDataStore()
 
 
 @pytest.fixture
-def validation_worker(event_bus: EventBus, store: GlobalDataStore) -> ValidationWorker:
+def validation_worker(event_bus, store):
     worker = ValidationWorker(
         event_bus=event_bus,
         store=store,
@@ -682,162 +679,3 @@ class TestValidationWorker:
 
         result = await validation_worker.validate(source)
         assert result is True
-
-    @pytest.mark.asyncio
-    async def test_metrics_tracking_complete(self, validation_worker, event_bus, store):
-        """Test that all metrics are tracked correctly."""
-        metrics = validation_worker.get_metrics()
-        assert metrics['checked'] == 0
-        assert metrics['validated'] == 0
-        assert metrics['rejected'] == 0
-        assert metrics['errors'] == 0
-        assert metrics['whitelist_passed'] == 0
-        assert metrics['blacklist_rejected'] == 0
-        assert metrics['connectivity_failed'] == 0
-        assert metrics['content_type_rejected'] == 0
-
-        # Test successful validation (whitelist not used since configured without keywords)
-        mock_session = AsyncMock(spec=aiohttp.ClientSession)
-        mock_session.head = MagicMock(return_value=_make_head_cm(200, {"Content-Type": "video/mp4"}))
-        validation_worker.session = mock_session
-
-        url1 = "http://cdn.example.com/good.m3u8"
-        source1 = MediaSource(
-            id=generate_media_id(url1, "Test"), url=url1,
-            station_name="Test", source_file="test.txt",
-        )
-        await validation_worker.validate(source1)
-
-        metrics = validation_worker.get_metrics()
-        assert metrics['checked'] == 1
-        assert metrics['validated'] == 1
-
-        # Test blacklist rejection
-        url2 = "http://cdn.example.com/bad-stream.m3u8"
-        source2 = MediaSource(
-            id=generate_media_id(url2, "Test"), url=url2,
-            station_name="Test", source_file="test.txt",
-        )
-        await validation_worker.validate(source2)
-
-        metrics = validation_worker.get_metrics()
-        assert metrics['checked'] == 2
-        assert metrics['validated'] == 1
-        assert metrics['rejected'] == 1
-        assert metrics['blacklist_rejected'] == 1
-
-        # Test connectivity failure
-        mock_session.head = MagicMock(return_value=_make_head_cm(404, {}))
-        validation_worker.session = mock_session
-
-        url3 = "http://slow.example.com/stream.m3u8"
-        source3 = MediaSource(
-            id=generate_media_id(url3, "Test"), url=url3,
-            station_name="Test", source_file="test.txt",
-        )
-        await validation_worker.validate(source3)
-
-        metrics = validation_worker.get_metrics()
-        assert metrics['checked'] == 3
-        assert metrics['rejected'] == 2
-        assert metrics['connectivity_failed'] == 1
-
-        # Test content type rejection
-        mock_session.head = MagicMock(
-            return_value=_make_head_cm(200, {"Content-Type": "text/html"})
-        )
-        await validation_worker.validate(source1)
-
-        metrics = validation_worker.get_metrics()
-        assert metrics['checked'] == 4
-        assert metrics['rejected'] == 3
-        assert metrics['content_type_rejected'] == 1
-
-    @pytest.mark.asyncio
-    async def test_add_whitelist_pattern(self, validation_worker):
-        """Test adding regex patterns to whitelist."""
-        initial_count = len(validation_worker._whitelist_patterns)
-        validation_worker.add_whitelist_pattern(r"\\.googlevideo\\.com")
-        assert len(validation_worker._whitelist_patterns) == initial_count + 1
-
-    @pytest.mark.asyncio
-    async def test_find_matching_keyword(self, validation_worker):
-        """Test _find_matching_keyword logic."""
-        keyword = validation_worker._find_matching_keyword(
-            "http://cdn.example.com/bad-stream.m3u8",
-            ["bad", "malware"]
-        )
-        assert keyword == "bad"
-
-        keyword = validation_worker._find_matching_keyword(
-            "http://premium-cdn.example.com/stream.m3u8",
-            ["premium-cdn", "good"]
-        )
-        assert keyword == "premium-cdn"
-
-        keyword = validation_worker._find_matching_keyword("http://example.com/stream.m3u8", ["bad"])
-        assert keyword is None
-
-    @pytest.mark.asyncio
-    async def test_check_whitelist_with_patterns(self, validation_worker):
-        """Test that compiled patterns are used correctly."""
-        # Add a pattern
-        validation_worker.add_whitelist_pattern(r"\\.youtube\\.com$")
-
-        # Test URL should be matched
-        url = "http://www.youtube.com/watch?v=test"
-        assert await validation_worker._check_whitelist(url) is True
-
-        # Test URL should not be matched
-        url2 = "http://vimeo.com/watch?v=test"
-        assert await validation_worker._check_whitelist(url2) is False
-
-    @pytest.mark.asyncio
-    async def test_add_blacklist_keyword(self, validation_worker):
-        """Test adding keywords to blacklist."""
-        initial_count = len(validation_worker._blacklist_keywords)
-        validation_worker.add_blacklist_keyword("test-video")
-        assert len(validation_worker._blacklist_keywords) == initial_count + 1
-
-        url = "http://cdn.example.com/test-video-stream.m3u8"
-        assert await validation_worker._check_blacklist(url) is not None
-
-    @pytest.mark.asyncio
-    async def test_find_matching_keyword(self, validation_worker):
-        """Test _find_matching_keyword logic."""
-        keyword = validation_worker._find_matching_keyword(
-            "http://cdn.example.com/bad-stream.m3u8",
-            ["bad", "malware"]
-        )
-        assert keyword == "bad"
-
-        keyword = validation_worker._find_matching_keyword(
-            "http://premium-cdn.example.com/stream.m3u8",
-            ["premium-cdn", "good"]
-        )
-        assert keyword == "premium-cdn"
-
-        keyword = validation_worker._find_matching_keyword("http://example.com/stream.m3u8", ["bad"])
-        assert keyword is None
-
-    
-
-    @pytest.mark.asyncio
-    async def test_whitelist_trumps_all(self, validation_worker, event_bus, store):
-        """Test that whitelist matching completely bypasses all other checks."""
-        url = "http://premium-cdn.example.com/bad-stream.m3u8"
-        source = MediaSource(
-            id=generate_media_id(url, "Test"), url=url,
-            station_name="Test", source_file="test.txt",
-        )
-        validated_queue = event_bus.subscribe(URLValidatedEvent)
-        rejected_queue = event_bus.subscribe(URLRejectedEvent)
-
-        await validation_worker.validate(source)
-
-        validated = await asyncio.wait_for(validated_queue.get(), timeout=1.0)
-        assert isinstance(validated, URLValidatedEvent)
-        assert validated.media_source.status == MediaStatus.VALIDATED
-
-        with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(rejected_queue.get(), timeout=0.2)

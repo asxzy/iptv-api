@@ -14,8 +14,6 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 import aiohttp
 import pytest
 
-sys.path.insert(0, "/Users/asxzy/src/iptv-api/v2")
-
 from core.workers.scan import (
     BaseScanWorker,
     FastScanWorker,

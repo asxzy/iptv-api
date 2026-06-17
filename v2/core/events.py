@@ -6,7 +6,7 @@ All events are immutable dataclasses with metadata.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional, List
 import uuid
 
@@ -17,7 +17,7 @@ from .types import MediaSource, Station, ScanMode, MediaStatus
 class Event:
     """Base class for all events."""
     event_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     trace_id: Optional[str] = None
     
     def with_trace(self, trace_id: str) -> 'Event':
@@ -25,7 +25,7 @@ class Event:
         kwargs = {
             f.name: getattr(self, f.name)
             for f in self.__dataclass_fields__.values()
-            if f.name not in ('event_id', 'timestamp', 'trace_id')
+            if f.name not in ('trace_id',)
         }
         return self.__class__(trace_id=trace_id, **kwargs)
 

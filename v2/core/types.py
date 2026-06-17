@@ -8,7 +8,7 @@ All data structures are immutable and designed for concurrent access.
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Optional, Dict, List, Any
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 import hashlib
 
@@ -67,15 +67,15 @@ class MediaSource:
     metrics: MediaMetrics = field(default_factory=MediaMetrics)
     status: MediaStatus = MediaStatus.DISCOVERED
     score: float = 0.0
-    created_at: datetime = field(default_factory=datetime.utcnow, repr=False)
-    updated_at: datetime = field(default_factory=datetime.utcnow, repr=False)
-    
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc), repr=False)
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc), repr=False)
+
     def with_status(self, status: MediaStatus) -> 'MediaSource':
         return MediaSource(
             id=self.id, url=self.url, station_name=self.station_name,
             source_file=self.source_file, headers=self.headers,
             metrics=self.metrics, status=status, score=self.score,
-            created_at=self.created_at, updated_at=datetime.utcnow()
+            created_at=self.created_at, updated_at=datetime.now(timezone.utc)
         )
     
     def with_metrics(self, metrics: MediaMetrics) -> 'MediaSource':
@@ -83,15 +83,15 @@ class MediaSource:
             id=self.id, url=self.url, station_name=self.station_name,
             source_file=self.source_file, headers=self.headers,
             metrics=metrics, status=self.status, score=self.score,
-            created_at=self.created_at, updated_at=datetime.utcnow()
-        )
-    
+        created_at=self.created_at, updated_at=datetime.now(timezone.utc)
+    )
+
     def with_score(self, score: float) -> 'MediaSource':
         return MediaSource(
             id=self.id, url=self.url, station_name=self.station_name,
             source_file=self.source_file, headers=self.headers,
             metrics=self.metrics, status=self.status, score=score,
-            created_at=self.created_at, updated_at=datetime.utcnow()
+            created_at=self.created_at, updated_at=datetime.now(timezone.utc)
         )
 
 

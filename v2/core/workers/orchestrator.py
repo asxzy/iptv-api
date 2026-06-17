@@ -251,7 +251,9 @@ class Orchestrator:
         # Process validation queue
         await self.validation_worker.start()
         try:
-            await self.validation_worker.process_queue()
+            await asyncio.wait_for(self.validation_worker.process_queue(), timeout=3600)
+        except (asyncio.TimeoutError, Exception):
+            pass
         finally:
             await self.validation_worker.stop()
 

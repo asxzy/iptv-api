@@ -7,9 +7,6 @@ Run with: python -m pytest core/tests/test_data_store.py -v
 
 import pytest
 import asyncio
-import sys
-sys.path.insert(0, '/Users/asxzy/src/iptv-api/v2')
-
 from core.store import GlobalDataStore
 from core.types import MediaSource, MediaMetrics, generate_media_id
 

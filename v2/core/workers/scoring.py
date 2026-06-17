@@ -49,15 +49,16 @@ class ScoringWorker:
         }
         
         # Codec efficiency scores (higher is better)
+        # Matches ffprobe "codec_name" output
         self.codec_scores = {
-            "h265": 1.0,    # HEVC, most efficient
-            "av1": 0.95,    # AV1, very efficient
-            "vp9": 0.9,     # VP9
-            "h264": 0.8,    # AVC, widely used
-            "mpeg4": 0.7,   # MPEG-4 Part 2
-            "theora": 0.6,  # Theora
-            "vp8": 0.6,     # VP8
-            "mjpeg": 0.5,   # Motion JPEG
+            "hevc": 1.0,     # HEVC (h265)
+            "av01": 0.95,    # AV1
+            "vp9": 0.9,      # VP9
+            "h264": 0.8,     # AVC
+            "mpeg4": 0.7,    # MPEG-4 Part 2
+            "theora": 0.6,   # Theora
+            "vp8": 0.6,      # VP8
+            "mjpeg": 0.5,    # Motion JPEG
         }
         
         if config:
@@ -178,9 +179,11 @@ class ScoringWorker:
             speed_score = 0.5 + 0.5 * ((speed - 5.0) / 15.0)
         else:
             speed_score = speed / 5.0 * 0.5
-        
-        delay = metrics.delay_ms or 0.0
-        if delay <= 20.0:
+
+        delay = metrics.delay_ms
+        if delay is None:
+            delay_score = 0.5  # Neutral score when unmeasured
+        elif delay <= 20.0:
             delay_score = 1.0
         elif delay <= 100.0:
             delay_score = 0.5 + 0.5 * ((100.0 - delay) / 80.0)

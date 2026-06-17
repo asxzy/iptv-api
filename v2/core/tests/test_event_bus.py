@@ -9,9 +9,6 @@ import pytest
 import asyncio
 from datetime import datetime
 
-import sys
-sys.path.insert(0, '/Users/asxzy/src/iptv-api/v2')
-
 from core.bus import EventBus
 from core.events import (
     Event, MediaSourceDiscoveredEvent, URLValidatedEvent,
