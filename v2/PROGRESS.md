@@ -54,12 +54,21 @@
   - `v2/core/workers/scan.py` - All scan workers + orchestrator
   - `v2/core/tests/test_scan_modes.py` - 66 comprehensive tests
 
-### Feature 05: Scoring Component
-- Quality scoring (resolution, fps, codec)
-- Loadability scoring (speed, delay)
-- Authenticity scoring (upscale detection)
-- Configurable weights
-- Composite score calculation
+### Feature 05: Scoring Component ✓
+- **ScoringWorker**: Async worker that computes quality, loadability, and composite scores
+- **Scoring Algorithms**: Reuses utils.scoring with MediaMetrics → dict bridge
+- **Quality Scoring**: Resolution tiers, fps, codec efficiency, bitrate adequacy
+- **Loadability Scoring**: Startup delay, bandwidth margin (throughput/bitrate headroom)
+- **Authenticity Scoring**: Upscale detection penalizes resolution credit (a_res factor)
+- **Configurable Weights**: All scoring weights tunable via constructor
+- **Composite Score**: w_Q * Q + w_L * L
+- **Event Integration**: Listens to DeepScanCompleteEvent (or FullScanCompleteEvent fallback), emits ScoreUpdatedEvent + RankingUpdatedEvent
+- **Store Integration**: Updates MediaSource with SCORING_COMPLETE status and all three scores
+- **Graceful Degradation**: Missing metrics → NEUTRAL fallback (0.5), never crashes
+- **Tests**: 52/52 passing (88.12% coverage)
+- **Key Files**:
+  - `v2/core/workers/scoring.py` - ScoringWorker implementation
+  - `v2/core/tests/test_scoring.py` - 52 comprehensive tests
 
 ### Feature 06: Result Writer & Global Store Updates
 - Atomic in-place updates to global store
@@ -121,4 +130,4 @@ Continue implementing remaining features following the TDD workflow:
 5. Update TODO documents
 6. Proceed to next feature
 
-Current status: 4/8 features completed (50% complete)
+Current status: 5/8 features completed (62.5% complete)

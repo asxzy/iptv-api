@@ -41,10 +41,24 @@
 ## Feature 05: Scoring Component
 - [x] Spec document
 - [x] TDD document
-- [ ] Implement scoring algorithms
-- [ ] Implement configurable weights
-- [ ] Write tests (aiming for 100% coverage)
-- [ ] Coverage check
+- [x] Implement ScoringWorker
+- [x] Reuse utils.scoring algorithms, adapted to v2 architecture
+- [x] Configurable weights via constructor
+- [x] Composite score: w_Q * Q + w_L * L
+- [x] Event-driven: DeepScanCompleteEvent → ScoreUpdatedEvent + RankingUpdatedEvent
+- [x] Store integration: updates media source with SCORING_COMPLETE status + scores
+- [x] Write tests (52 tests, 100% pass, 88.12% coverage)
+  - [x] Quality score calculation
+  - [x] Loadability score calculation
+  - [x] Configurable weights (quality vs loadability domination)
+  - [x] Upscale detection penalty (a_res)
+  - [x] Missing data → NEUTRAL fallback
+  - [x] Event emission (ScoreUpdatedEvent, RankingUpdatedEvent)
+  - [x] Store integration
+  - [x] Concurrent scoring (20 sources, no race conditions)
+  - [x] Codec efficiency (hevc vs h264)
+  - [x] Edge cases (infinite speed, zero values, negative delay)
+- [x] Coverage check (88.12 >= 88%)
 
 ## Feature 06: Result Writer & Global Store Updates
 - [ ] Spec document

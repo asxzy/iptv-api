@@ -27,6 +27,7 @@ class MediaStatus(Enum):
     FAST_SCANNED = auto()
     FULL_SCANNED = auto()
     DEEP_SCANNED = auto()
+    SCORING_COMPLETE = auto()
     FAILED = auto()
     BLACKLISTED = auto()
 
@@ -51,6 +52,8 @@ class MediaMetrics:
     ssim_score: Optional[float] = None
     actual_resolution: Optional[str] = None
     quality_score: Optional[float] = None
+    loadability_score: Optional[float] = None
+    composite_score: Optional[float] = None
     
     def to_dict(self) -> Dict[str, Any]:
         return {k: v for k, v in self.__dict__.items() if v is not None}
