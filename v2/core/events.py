@@ -188,9 +188,23 @@ class ScanJobFailedEvent(Event):
 
 # Result Writer Events
 @dataclass(frozen=True)
-class ResultUpdatedEvent(Event):
-    """Emitted when result files have been updated."""
+class ResultWriterStartedEvent(Event):
+    """Emitted when result writer begins a write cycle."""
+    output_dir: str = ""
+    formats: List[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ResultWriterCompletedEvent(Event):
+    """Emitted when result writer finishes a write cycle."""
+    output_dir: str = ""
+    formats: List[str] = field(default_factory=list)
     total_stations: int = 0
     total_sources: int = 0
-    file_count: int = 0
-    elapsed_ms: float = 0.0
+
+
+@dataclass(frozen=True)
+class ResultWriterErrorEvent(Event):
+    """Emitted when result writer encounters an error."""
+    output_dir: str = ""
+    error_message: str = ""

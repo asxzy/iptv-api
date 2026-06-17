@@ -47,12 +47,12 @@
 - [x] Coverage check (no regressions, 137 total tests pass)
 
 ## Feature 06: Result Writer & Global Store Updates
-- [ ] Spec document
-- [ ] TDD document
-- [ ] TODO document
-- [ ] Implement ResultWriter
-- [ ] Write tests
-- [ ] Coverage check
+- [x] Spec document
+- [x] TDD document
+- [x] TODO document
+- [x] Implement ResultWriter
+- [x] Write tests (9 tests, all passing)
+- [x] Coverage check (no regressions, 146 total tests pass)
 
 ## Feature 07: Proxy Mode
 - [ ] Spec document
