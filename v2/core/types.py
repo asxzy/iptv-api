@@ -27,7 +27,6 @@ class MediaStatus(Enum):
     FAST_SCANNED = auto()
     FULL_SCANNED = auto()
     DEEP_SCANNED = auto()
-    SCORING_COMPLETE = auto()
     FAILED = auto()
     BLACKLISTED = auto()
 
@@ -52,8 +51,6 @@ class MediaMetrics:
     ssim_score: Optional[float] = None
     actual_resolution: Optional[str] = None
     quality_score: Optional[float] = None
-    loadability_score: Optional[float] = None
-    composite_score: Optional[float] = None
     
     def to_dict(self) -> Dict[str, Any]:
         return {k: v for k, v in self.__dict__.items() if v is not None}
@@ -69,6 +66,7 @@ class MediaSource:
     headers: Dict[str, str] = field(default_factory=dict, repr=False)
     metrics: MediaMetrics = field(default_factory=MediaMetrics)
     status: MediaStatus = MediaStatus.DISCOVERED
+    score: float = 0.0
     created_at: datetime = field(default_factory=datetime.utcnow, repr=False)
     updated_at: datetime = field(default_factory=datetime.utcnow, repr=False)
     
@@ -76,7 +74,7 @@ class MediaSource:
         return MediaSource(
             id=self.id, url=self.url, station_name=self.station_name,
             source_file=self.source_file, headers=self.headers,
-            metrics=self.metrics, status=status,
+            metrics=self.metrics, status=status, score=self.score,
             created_at=self.created_at, updated_at=datetime.utcnow()
         )
     
@@ -84,7 +82,15 @@ class MediaSource:
         return MediaSource(
             id=self.id, url=self.url, station_name=self.station_name,
             source_file=self.source_file, headers=self.headers,
-            metrics=metrics, status=self.status,
+            metrics=metrics, status=self.status, score=self.score,
+            created_at=self.created_at, updated_at=datetime.utcnow()
+        )
+    
+    def with_score(self, score: float) -> 'MediaSource':
+        return MediaSource(
+            id=self.id, url=self.url, station_name=self.station_name,
+            source_file=self.source_file, headers=self.headers,
+            metrics=self.metrics, status=self.status, score=score,
             created_at=self.created_at, updated_at=datetime.utcnow()
         )
 

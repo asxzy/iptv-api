@@ -1,33 +1,16 @@
 # TODO: Feature 05 - Scoring Component
 
-## Status: complete
-
 ## Tasks
-- [x] Review spec document (spec-05-scoring.md)
-- [x] Review TDD document (tdd-05-scoring.md)
-- [x] Extend MediaStatus enum with SCORING_COMPLETE (types.py)
-- [x] Extend MediaMetrics with loadability_score, composite_score (types.py)
-- [x] Implement ScoringWorker (workers/scoring.py)
-  - [x] process_queue: listen for DeepScanCompleteEvent
-  - [x] score: compute quality, loadability, composite scores
-  - [x] _metrics_to_scoring_dict: bridge MediaMetrics → utils.scoring dict
-  - [x] Emit ScoreUpdatedEvent
-  - [x] Update GlobalDataStore
-  - [x] Optional: emit RankingUpdatedEvent
-- [x] Write comprehensive tests (test_scoring.py)
-  - [x] Quality score calculation tests
-  - [x] Loadability score calculation tests
-  - [x] Composite score with configurable weights
-  - [x] Upscale penalty detection
-  - [x] Missing data (neutral fallback)
-  - [x] Event emission (ScoreUpdatedEvent, RankingUpdatedEvent)
-  - [x] Store integration
-  - [x] Concurrent scoring
-- [x] Run tests (52 tests, 100% pass, 88.12% coverage)
-- [x] Update PROGRESS.md
-
-## Notes
-- Reuse existing scoring algorithms from utils/scoring.py
-- Bridge MediaMetrics fields to dict format expected by utils.scoring
-- Handle missing data gracefully (NEUTRAL fallback)
-- Follow same pattern as ValidationWorker
+- [x] Design scoring algorithm (quality + loadability + authenticity)
+- [x] Implement `ScoringWorker` class
+  - [x] `on_fast_scan_complete`: handle fast scan events
+  - [x] `on_full_scan_complete`: handle full scan events
+  - [x] `on_deep_scan_complete`: handle deep scan events
+  - [x] `_compute_scores`: quality and loadability computation
+  - [x] `_compute_quality`: resolution, fps, codec, upscale penalty
+  - [x] `_compute_loadability`: speed and delay scoring
+  - [x] `_update_and_emit_ranking`: station ranking management
+- [x] Add `score` field to `MediaSource` type
+- [x] Add `with_score` method to `MediaSource`
+- [x] Write tests (5 tests: quality, upscale, balance, concurrency, configurable weights)
+- [x] All 137 tests pass (no regressions)

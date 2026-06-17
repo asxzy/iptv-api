@@ -41,49 +41,32 @@
 ## Feature 05: Scoring Component
 - [x] Spec document
 - [x] TDD document
-- [x] Implement ScoringWorker
-- [x] Reuse utils.scoring algorithms, adapted to v2 architecture
-- [x] Configurable weights via constructor
-- [x] Composite score: w_Q * Q + w_L * L
-- [x] Event-driven: DeepScanCompleteEvent → ScoreUpdatedEvent + RankingUpdatedEvent
-- [x] Store integration: updates media source with SCORING_COMPLETE status + scores
-- [x] Write tests (52 tests, 100% pass, 88.12% coverage)
-  - [x] Quality score calculation
-  - [x] Loadability score calculation
-  - [x] Configurable weights (quality vs loadability domination)
-  - [x] Upscale detection penalty (a_res)
-  - [x] Missing data → NEUTRAL fallback
-  - [x] Event emission (ScoreUpdatedEvent, RankingUpdatedEvent)
-  - [x] Store integration
-  - [x] Concurrent scoring (20 sources, no race conditions)
-  - [x] Codec efficiency (hevc vs h264)
-  - [x] Edge cases (infinite speed, zero values, negative delay)
-- [x] Coverage check (88.12 >= 88%)
+- [x] Implement scoring algorithms
+- [x] Implement configurable weights
+- [x] Write tests (5 tests, all passing)
+- [x] Coverage check (no regressions, 137 total tests pass)
 
 ## Feature 06: Result Writer & Global Store Updates
-- [x] Spec document
-- [x] TDD document
-- [x] TODO document
-- [x] Implement ResultWriter
-- [x] Write tests (44 tests, all passing)
-- [x] Coverage check (86% module, 90% overall)
+- [ ] Spec document
+- [ ] TDD document
+- [ ] TODO document
+- [ ] Implement ResultWriter
+- [ ] Write tests
+- [ ] Coverage check
 
 ## Feature 07: Proxy Mode
-- [x] Spec document
-- [x] TDD document
-- [x] TODO document
-- [x] Implement proxy inspector
-- [x] Write tests (54 tests, all passing)
-- [x] Coverage check (89.15%)
+- [ ] Spec document
+- [ ] TDD document
+- [ ] TODO document
+- [ ] Implement proxy inspector
+- [ ] Write tests (aiming for 100% coverage)
+- [ ] Coverage check
 
 ## Feature 08: Orchestrator & Web Service
-- [x] Spec document
-- [x] TDD document
-- [x] TODO document
-- [x] Implement orchestrator
-- [x] Update web service endpoints
-- [x] Integration tests (aiming for 95%+ coverage)
-- [x] Coverage check (to be determined)
-
-## Summary
-All 8 features are complete.
+- [ ] Spec document
+- [ ] TDD document
+- [ ] TODO document
+- [ ] Implement orchestrator
+- [ ] Update web service endpoints
+- [ ] Integration tests (aiming for 95%+ coverage)
+- [ ] Coverage check

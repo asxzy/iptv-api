@@ -1,244 +1,213 @@
 """
 v2/core/workers/scoring.py
 
-Scoring worker that computes quality, loadability, and composite scores
-for media sources after scanning. Reuses the ranking algorithms from
-utils/scoring.py, adapted to the v2 event-driven architecture.
-
-Listens for DeepScanCompleteEvent (or FullScanCompleteEvent as fallback)
-and emits ScoreUpdatedEvent with computed scores.
+Scoring worker that computes quality and loadability scores for media sources.
 """
 
 import asyncio
 import logging
-import os
-import sys
-from typing import Any, Dict, List, Optional
-
-# Ensure the project root is on sys.path so we can import utils.*
-_PROJECT_ROOT = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "..")
-)
-sys.path.insert(0, _PROJECT_ROOT)
+from typing import Dict, List, Optional, Tuple
+from datetime import datetime
 
 from ..bus import EventBus
 from ..events import (
-    DeepScanCompleteEvent,
-    FullScanCompleteEvent,
-    RankingUpdatedEvent,
     ScoreUpdatedEvent,
+    RankingUpdatedEvent,
+    FastScanCompleteEvent,
+    FullScanCompleteEvent,
+    DeepScanCompleteEvent,
 )
+from ..types import MediaSource, MediaStatus, MediaMetrics, ScanMode
 from ..store import GlobalDataStore
-from ..types import MediaMetrics, MediaSource, MediaStatus
 
 logger = logging.getLogger(__name__)
-
-# Re-export the reference weights so callers can inspect/tune them
-from utils.scoring import DEFAULT_WEIGHTS, compute_score, loadability_score, quality_score
 
 
 class ScoringWorker:
     """
-    Worker that computes quality, loadability, and composite scores
-    for media sources after they have been scanned.
-
-    Consumption modes:
-        1. process_queue() — continuous event loop (preferred)
-        2. score() — one-shot scoring for a single source
-
-    Uses the existing scoring algorithms from utils/scoring.py, which
-    handle missing data gracefully (NEUTRAL fallback).
+    Worker that scores media sources based on scan results.
+    Listens to scan complete events and updates source scores.
     """
-
-    def __init__(
-        self,
-        event_bus: EventBus,
-        store: GlobalDataStore,
-        weights: Optional[Dict[str, float]] = None,
-        emit_ranking_events: bool = True,
-    ):
+    
+    def __init__(self, event_bus: EventBus, data_store: GlobalDataStore, config: Optional[Dict] = None):
         self.event_bus = event_bus
-        self.store = store
-        self.weights = dict(weights) if weights else DEFAULT_WEIGHTS.copy()
-        self.emit_ranking_events = emit_ranking_events
-
-        self._running = False
-        self._task: Optional[asyncio.Task] = None
-        self._metrics = {
-            "scored": 0,
-            "errors": 0,
-            "rankings_updated": 0,
+        self.data_store = data_store
+        # Weights for quality and loadability (can be made configurable via config dict)
+        self.weight_quality = 0.7
+        self.weight_loadability = 0.3
+        
+        # Resolution scores (map resolution string to a score 0-1)
+        self.resolution_scores = {
+            "7680x4320": 1.0,   # 8K
+            "3840x2160": 0.9,   # 4K
+            "2560x1440": 0.8,   # 1440p
+            "1920x1080": 0.7,   # 1080p
+            "1280x720": 0.6,    # 720p
+            "854x480": 0.5,     # 480p
+            "640x360": 0.4,     # 360p
+            "426x240": 0.3,     # 240p
         }
-
-    async def start(self):
-        self._running = True
-        logger.info("Scoring worker started")
-
-    async def stop(self):
-        self._running = False
-        if self._task and not self._task.done():
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-        logger.info("Scoring worker stopped")
-
-    async def process_queue(self, input_queue: asyncio.Queue):
-        """
-        Main loop: consume DeepScanCompleteEvent (preferred) or
-        FullScanCompleteEvent (fallback) and score each source.
-        """
-        self._task = asyncio.current_task()
-        while self._running:
-            try:
-                event = await asyncio.wait_for(input_queue.get(), timeout=1.0)
-            except asyncio.TimeoutError:
-                continue
-            except asyncio.CancelledError:
-                break
-
-            try:
-                if isinstance(event, DeepScanCompleteEvent):
-                    await self.score(event.media_source, event.trace_id)
-                elif isinstance(event, FullScanCompleteEvent):
-                    await self.score(event.media_source, event.trace_id)
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                self._metrics["errors"] += 1
-                logger.error("Scoring worker error: %s", e)
-
-    async def score(
-        self,
-        media_source: MediaSource,
-        trace_id: Optional[str] = None,
-    ) -> bool:
-        """
-        Compute quality, loadability, and composite scores for a media source.
-
-        1. Convert MediaMetrics -> scoring dict (bridge)
-        2. Compute scores via utils.scoring functions
-        3. Update store with scored MediaSource + SCORING_COMPLETE status
-        4. Emit ScoreUpdatedEvent
-        5. Optionally emit RankingUpdatedEvent
-
-        Returns True on success, False on error.
-        """
-        trace = trace_id or "scoring"
-
-        try:
-            result = self._metrics_to_scoring_dict(media_source.metrics)
-            q = quality_score(result, self.weights)
-            l = loadability_score(result, self.weights)
-            c = compute_score(result, self.weights)
-
-            new_metrics = MediaMetrics(
-                **{
-                    **media_source.metrics.to_dict(),
-                    "quality_score": q,
-                    "loadability_score": l,
-                    "composite_score": c,
-                }
-            )
-
-            updated = (
-                media_source.with_metrics(new_metrics)
-                .with_status(MediaStatus.SCORING_COMPLETE)
-            )
-            await self.store.add_or_update_source(updated)
-
-            station_name = media_source.station_name
-            await self.event_bus.publish(
-                ScoreUpdatedEvent(
-                    media_source_id=media_source.id,
-                    quality_score=q,
-                    loadability_score=l,
-                    composite_score=c,
-                    station_name=station_name,
-                ).with_trace(trace),
-            )
-
-            self._metrics["scored"] += 1
-
-            if self.emit_ranking_events:
-                await self._check_ranking(station_name, media_source.id, trace)
-
-            logger.debug(
-                "Scored %s → q=%.3f l=%.3f c=%.3f",
-                media_source.url, q, l, c,
-            )
-            return True
-
-        except Exception as e:
-            self._metrics["errors"] += 1
-            logger.error("Scoring error for %s: %s", media_source.url, e)
-            return False
-
-    async def _check_ranking(
-        self,
-        station_name: str,
-        source_id: str,
-        trace: str,
-    ):
-        """Emit RankingUpdatedEvent when the station's top sources change."""
-        station = await self.store.get_station(station_name)
-        if not station:
+        
+        # Codec efficiency scores (higher is better)
+        self.codec_scores = {
+            "h265": 1.0,    # HEVC, most efficient
+            "av1": 0.95,    # AV1, very efficient
+            "vp9": 0.9,     # VP9
+            "h264": 0.8,    # AVC, widely used
+            "mpeg4": 0.7,   # MPEG-4 Part 2
+            "theora": 0.6,  # Theora
+            "vp8": 0.6,     # VP8
+            "mjpeg": 0.5,   # Motion JPEG
+        }
+        
+        if config:
+            self.weight_quality = config.get('weight_quality', self.weight_quality)
+            self.weight_loadability = config.get('weight_loadability', self.weight_loadability)
+    
+    async def on_fast_scan_complete(self, event: FastScanCompleteEvent, trace_id: str = None):
+        """Handle fast scan completion by updating score based on available metrics."""
+        await self._update_score(event.media_source, trace_id)
+    
+    async def on_full_scan_complete(self, event: FullScanCompleteEvent, trace_id: str = None):
+        """Handle full scan completion by updating score based on available metrics."""
+        await self._update_score(event.media_source, trace_id)
+    
+    async def on_deep_scan_complete(self, event: DeepScanCompleteEvent, trace_id: str = None):
+        """Handle deep scan completion by updating score based on available metrics."""
+        await self._update_score(event.media_source, trace_id)
+    
+    async def _update_score(self, media_source: MediaSource, trace_id: str = None):
+        """Compute and update the score for a media source."""
+        # Get the latest source from the store to ensure we have the latest metrics
+        station = await self.data_store.get_station(media_source.station_name)
+        if station is None:
+            logger.warning(f"Station not found: {media_source.station_name}")
+            # We'll still score the source even if it's not in the store yet
+            latest_source = media_source
+        else:
+            latest_source = station.sources.get(media_source.url)
+            if latest_source is None:
+                latest_source = media_source
+        
+        # Compute score based on the latest source's metrics
+        quality, loadability, composite = self._compute_scores(latest_source.metrics)
+        
+        # If the score hasn't changed significantly, skip update
+        if abs(latest_source.score - composite) < 0.001:
             return
-
-        top = station.get_top_sources(limit=5)
-        top_ids = [s.id for s in top]
-
-        await self.event_bus.publish(
-            RankingUpdatedEvent(
-                station_name=station_name,
-                top_sources=top_ids,
-                total_sources=station.source_count,
-            ).with_trace(trace),
+        
+        # Update the source with the new score
+        updated_source = latest_source.with_score(composite)
+        await self.data_store.add_or_update_source(updated_source)
+        
+        # Emit score updated event
+        score_event = ScoreUpdatedEvent(
+            media_source_id=media_source.id,
+            quality_score=quality,
+            loadability_score=loadability,
+            composite_score=composite,
         )
-        self._metrics["rankings_updated"] += 1
-
-    @staticmethod
-    def _metrics_to_scoring_dict(metrics: MediaMetrics) -> Dict[str, Any]:
-        """
-        Bridge between MediaMetrics and the flat-dict format expected by
-        utils.scoring functions.
-
-        Field mapping:
-            metrics.resolution  → "resolution"  (e.g. "1920x1080")
-            metrics.bitrate_kbps → "bitrate"    (converted to bps)
-            metrics.fps         → "fps"
-            metrics.video_codec → "video_codec"
-            metrics.speed_mbps  → "speed"       (converted Mbps→MB/s)
-            metrics.delay_ms    → "delay"
-            metrics.is_upscaled → "a_res"       (derived authenticity factor)
-        """
-        d: Dict[str, Any] = {}
-
-        if metrics.resolution:
-            d["resolution"] = metrics.resolution
-
-        if metrics.bitrate_kbps is not None:
-            d["bitrate"] = metrics.bitrate_kbps * 1000.0
-
-        if metrics.fps is not None:
-            d["fps"] = metrics.fps
-
-        if metrics.video_codec:
-            d["video_codec"] = metrics.video_codec
-
-        if metrics.speed_mbps is not None:
-            d["speed"] = metrics.speed_mbps / 8.0
-
-        if metrics.delay_ms is not None:
-            d["delay"] = metrics.delay_ms
-
-        if metrics.is_upscaled is True:
-            d["a_res"] = 0.7
-        elif metrics.is_upscaled is False:
-            d["a_res"] = 1.0
-
-        return d
-
-    def get_metrics(self) -> Dict[str, int]:
-        return dict(self._metrics)
+        if trace_id:
+            score_event = score_event.with_trace(trace_id)
+        await self.event_bus.publish(score_event)
+        
+        # Update ranking for the station and emit ranking updated event if changed
+        await self._update_and_emit_ranking(media_source.station_name, trace_id)
+    
+    def _compute_scores(self, metrics: MediaMetrics) -> Tuple[float, float, float]:
+        """Compute quality, loadability, and composite scores."""
+        quality = self._compute_quality(metrics)
+        loadability = self._compute_loadability(metrics)
+        composite = self.weight_quality * quality + self.weight_loadability * loadability
+        return (max(0.0, min(1.0, quality)),
+                max(0.0, min(1.0, loadability)),
+                max(0.0, min(1.0, composite)))
+    
+    def _compute_quality(self, metrics: MediaMetrics) -> float:
+        """Compute quality score from resolution, fps, codec, and bitrate."""
+        # Resolution score
+        resolution_score = self._get_resolution_score(metrics.resolution)
+        
+        # FPS score: normalize to 0-1, assuming 60fps is max useful
+        fps_score = min(metrics.fps or 0, 60.0) / 60.0 if metrics.fps is not None else 0.5
+        
+        # Codec score
+        codec_score = self.codec_scores.get(metrics.video_codec or "", 0.5)
+        
+        # Combine resolution, fps, and codec with weights
+        quality = (
+            0.5 * resolution_score +
+            0.3 * fps_score +
+            0.2 * codec_score
+        )
+        
+        # Authenticity penalty: if upscaled, reduce quality
+        if metrics.is_upscaled:
+            quality *= 0.5  # 50% penalty for upscaled content
+        
+        return quality
+    
+    def _get_resolution_score(self, resolution: Optional[str]) -> float:
+        """Map resolution string to a score 0-1."""
+        if resolution is None:
+            return 0.0
+        norm_res = resolution.replace(" ", "").lower()
+        if norm_res in self.resolution_scores:
+            return self.resolution_scores[norm_res]
+        if "x" in norm_res:
+            try:
+                _, height_str = norm_res.split("x")
+                height = int(height_str)
+                known_heights = [4320, 2160, 1440, 1080, 720, 480, 360, 240]
+                closest_height = min(known_heights, key=lambda h: abs(h - height))
+                height_to_score = {
+                    4320: 1.0, 2160: 0.9, 1440: 0.8, 1080: 0.7,
+                    720: 0.6, 480: 0.5, 360: 0.4, 240: 0.3,
+                }
+                return height_to_score.get(closest_height, 0.0)
+            except ValueError:
+                pass
+        return 0.0
+    
+    def _compute_loadability(self, metrics: MediaMetrics) -> float:
+        """Compute loadability score from speed and delay."""
+        speed = metrics.speed_mbps or 0.0
+        if speed >= 20.0:
+            speed_score = 1.0
+        elif speed >= 5.0:
+            speed_score = 0.5 + 0.5 * ((speed - 5.0) / 15.0)
+        else:
+            speed_score = speed / 5.0 * 0.5
+        
+        delay = metrics.delay_ms or 0.0
+        if delay <= 20.0:
+            delay_score = 1.0
+        elif delay <= 100.0:
+            delay_score = 0.5 + 0.5 * ((100.0 - delay) / 80.0)
+        else:
+            delay_score = max(0.0, 1.0 - (delay - 100.0) / 100.0)
+        
+        return 0.7 * speed_score + 0.3 * delay_score
+    
+    async def _update_and_emit_ranking(self, station_name: str, trace_id: str = None):
+        """Compute ranking for a station and emit RankingUpdatedEvent if changed."""
+        station = await self.data_store.get_station(station_name)
+        if station is None:
+            return
+        
+        # Create sorted list of (url, score) for ranking
+        scored_sources = sorted(
+            [(url, source.score) for url, source in station.sources.items()],
+            key=lambda x: x[1],
+            reverse=True
+        )
+        top_sources = [url for url, _ in scored_sources[:10]]
+        
+        ranking_event = RankingUpdatedEvent(
+            station_name=station_name,
+            top_sources=top_sources,
+            total_sources=len(scored_sources),
+        )
+        if trace_id:
+            ranking_event = ranking_event.with_trace(trace_id)
+        await self.event_bus.publish(ranking_event)
