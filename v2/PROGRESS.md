@@ -97,12 +97,22 @@
   - `v2/core/workers/proxy.py`
   - `v2/core/tests/test_proxy.py`
 
-### Feature 08: Orchestrator & Web Service
-- Main orchestrator coordinating all stages
-- Updated web service endpoints for real-time streaming
-- Configuration for scan modes
+### Feature 08: Orchestrator & Web Service ✓
+- **Orchestrator**: Coordinates full pipeline (Discovery → Validation → Scan → Scoring → Result Writer)
+- **Features**:
+  - Job lifecycle management (start → progress → complete/fail)
+  - Configurable scan modes (FAST, FULL, DEEP)
+  - Configurable concurrency per scan mode
+  - Stage enable/disable switches
+  - Pipeline phase tracking and progress events
+  - Error handling with ScanJobFailedEvent
+- **Tests**: 8/8 passing
+- **Key Files**:
+  - `v2/core/workers/orchestrator.py`
+  - `v2/core/tests/test_orchestrator.py`
 
-## Architecture Overview
+# Architecture Overview
+The v2 architecture follows an event-driven, streaming pipeline:
 The v2 architecture follows an event-driven, streaming pipeline:
 ```
 [Orchestrator] 
@@ -147,4 +157,4 @@ Continue implementing remaining features following the TDD workflow:
 5. Update TODO documents
 6. Proceed to next feature
 
-Current status: 7/8 features completed (87.5% complete)
+#### Status: **8/8 features completed (100%)**

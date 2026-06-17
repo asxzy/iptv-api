@@ -66,10 +66,11 @@
 - [x] Coverage check (no regressions, 167 total tests pass)
 
 ## Feature 08: Orchestrator & Web Service
-- [ ] Spec document
-- [ ] TDD document
-- [ ] TODO document
-- [ ] Implement orchestrator
-- [ ] Update web service endpoints
-- [ ] Integration tests (aiming for 95%+ coverage)
-- [ ] Coverage check
+- [x] Spec document
+- [x] TDD document
+- [x] TODO document
+- [x] Implement orchestrator (full pipeline lifecycle)
+- [x] Implement configurable scan modes and concurrency
+- [x] Implement job events (Started, Progress, Completed, Failed)
+- [x] Write tests (8 tests, all passing)
+- [x] Coverage check (no regressions, 175 total tests pass)
