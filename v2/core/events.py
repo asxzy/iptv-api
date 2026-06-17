@@ -184,3 +184,13 @@ class ScanJobFailedEvent(Event):
     """Emitted when scan job fails."""
     job_id: str = ""
     error_message: str = ""
+
+
+# Result Writer Events
+@dataclass(frozen=True)
+class ResultUpdatedEvent(Event):
+    """Emitted when result files have been updated."""
+    total_stations: int = 0
+    total_sources: int = 0
+    file_count: int = 0
+    elapsed_ms: float = 0.0

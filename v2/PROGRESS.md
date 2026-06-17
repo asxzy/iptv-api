@@ -70,10 +70,22 @@
   - `v2/core/workers/scoring.py` - ScoringWorker implementation
   - `v2/core/tests/test_scoring.py` - 52 comprehensive tests
 
-### Feature 06: Result Writer & Global Store Updates
-- Atomic in-place updates to global store
-- Real-time result file generation
-- Integration with web service endpoints
+### Feature 06: Result Writer & Global Store Updates ✓
+- **ResultWorker**: Async worker that generates output result files from scored media sources
+- **Real-time Updates**: Debounced writes on ScoreUpdatedEvent (configurable write_interval)
+- **Final Flush**: Full result generation on ScanJobCompletedEvent
+- **Output Compatibility**: Reuses original write_channel_to_file() for txt/m3u/ipv4/ipv6/hls output
+- **Data Conversion**: Converts v2 MediaSource → v1 ChannelData format with origin/ipv_type mapping
+- **Sorted Output**: Sources sorted by composite_score (descending) per station
+- **Result Store**: Updates shared result_store for web service live serving
+- **Event Emission**: Publishes ResultUpdatedEvent on successful write
+- **Lazy Imports**: Defers original utils imports to call-time to avoid import cascade issues
+- **Tests**: 44/44 passing (86% coverage on module, 90% overall)
+- **Key Files**:
+  - `v2/core/workers/result_writer.py` - ResultWorker implementation
+  - `v2/core/events.py` - Added ResultUpdatedEvent
+  - `v2/core/__init__.py` - Added project root to sys.path for original utils imports
+  - `v2/core/tests/test_result_writer.py` - 44 comprehensive tests
 
 ### Feature 07: Proxy Mode
 - Dynamic inspection of URIs against whitelist/blacklist
@@ -130,4 +142,4 @@ Continue implementing remaining features following the TDD workflow:
 5. Update TODO documents
 6. Proceed to next feature
 
-Current status: 5/8 features completed (62.5% complete)
+Current status: 6/8 features completed (75% complete)
