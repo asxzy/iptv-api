@@ -90,7 +90,7 @@ class TestOrchestrator:
             },
         )
         orch.discovery_worker = AsyncMock()
-        orch.discovery_worker.process_file = AsyncMock(return_value=1)
+        orch.discovery_worker.discover_from_file = AsyncMock(return_value=1)
         orch.validation_worker = AsyncMock()
         orch.validation_worker.process_queue = AsyncMock()
         orch.scan_orchestrator = AsyncMock()
@@ -106,8 +106,8 @@ class TestOrchestrator:
         # Assert
         assert result["job_id"] is not None
         assert result["success"] is True
-        # With open_discovery=False, process_file should not be called
-        orch.discovery_worker.process_file.assert_not_called()
+        # With open_discovery=False, discover_from_file should not be called
+        orch.discovery_worker.discover_from_file.assert_not_called()
         orch.scan_orchestrator.scan_all.assert_not_called()
         orch.result_writer.write_all.assert_called()
 
@@ -128,7 +128,7 @@ class TestOrchestrator:
             },
         )
         orch.discovery_worker = AsyncMock()
-        orch.discovery_worker.process_file = AsyncMock(return_value=0)
+        orch.discovery_worker.discover_from_file = AsyncMock(return_value=0)
         orch.validation_worker = AsyncMock()
         orch.validation_worker.process_queue = AsyncMock()
         orch.scan_orchestrator = AsyncMock()
@@ -152,7 +152,7 @@ class TestOrchestrator:
         queue = event_bus.subscribe(ScanJobCompletedEvent)
 
         orchestrator.discovery_worker = AsyncMock()
-        orchestrator.discovery_worker.process_file = AsyncMock(return_value=0)
+        orchestrator.discovery_worker.discover_from_file = AsyncMock(return_value=0)
         orchestrator.validation_worker = AsyncMock()
         orchestrator.validation_worker.process_queue = AsyncMock()
         orchestrator.scan_orchestrator = AsyncMock()
@@ -222,7 +222,7 @@ class TestOrchestrator:
 
         assert orch.config["scan_modes"] == ["fast"]
         orch.discovery_worker = AsyncMock()
-        orch.discovery_worker.process_file = AsyncMock(return_value=0)
+        orch.discovery_worker.discover_from_file = AsyncMock(return_value=0)
         orch.validation_worker = AsyncMock()
         orch.validation_worker.process_queue = AsyncMock()
         orch.scan_orchestrator = AsyncMock()
@@ -258,7 +258,7 @@ class TestOrchestrator:
         progress_queue = event_bus.subscribe(ScanJobProgressEvent)
 
         orchestrator.discovery_worker = AsyncMock()
-        orchestrator.discovery_worker.process_file = AsyncMock(return_value=2)
+        orchestrator.discovery_worker.discover_from_file = AsyncMock(return_value=2)
         orchestrator.validation_worker = AsyncMock()
         orchestrator.validation_worker.process_queue = AsyncMock()
         orchestrator.scan_orchestrator = AsyncMock()
@@ -308,7 +308,7 @@ class TestOrchestrator:
 
         # Mock only the parts we don't need
         orch.discovery_worker = AsyncMock()
-        orch.discovery_worker.process_file = AsyncMock(return_value=0)
+        orch.discovery_worker.discover_from_file = AsyncMock(return_value=0)
         orch.validation_worker = AsyncMock()
         orch.validation_worker.process_queue = AsyncMock()
 

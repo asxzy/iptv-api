@@ -45,6 +45,7 @@ class DiscoveryWorker:
         self.session: Optional[aiohttp.ClientSession] = None
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._visited_urls: Set[str] = set()
+        self._visited_lock = asyncio.Lock()
         
     async def start(self):
         """Start the discovery worker."""
@@ -198,8 +199,11 @@ class DiscoveryWorker:
         if url in self._visited_urls:
             # Avoid cycles
             return
-        
-        self._visited_urls.add(url)
+
+        async with self._visited_lock:
+            if url in self._visited_urls:
+                return
+            self._visited_urls.add(url)
         
         try:
             async with self._semaphore:

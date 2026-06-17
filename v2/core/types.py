@@ -100,7 +100,7 @@ class Station:
     """Mutable container for a station and its media sources."""
     name: str
     sources: Dict[str, MediaSource] = field(default_factory=dict)
-    created_at: datetime = field(default_factory=datetime.utcnow, repr=False)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc), repr=False)
     
     @property
     def source_count(self) -> int:

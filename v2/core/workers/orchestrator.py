@@ -15,6 +15,7 @@ from typing import Dict, List, Optional, Any
 from ..bus import EventBus
 from ..store import GlobalDataStore
 from ..events import (
+    MediaSourceDiscoveredEvent,
     ScanJobStartedEvent,
     ScanJobProgressEvent,
     ScanJobCompletedEvent,
@@ -228,14 +229,15 @@ class Orchestrator:
         self._phase = "discovery"
         logger.info("Starting discovery phase")
 
+        await self.discovery_worker.start()
+
         source_files = self.config.get("source_files", ["subscribe.txt"])
         total = 0
         for src_file in source_files:
-            # Check if file exists
             if os.path.exists(src_file):
-                count = await self.discovery_worker.process_file(src_file)
-                total += count
-                logger.info(f"Discovered {count} sources from {src_file}")
+                await self.discovery_worker.discover_from_file(src_file)
+                total += 1
+                logger.info(f"Discovered sources from {src_file}")
 
         return total
 
@@ -248,13 +250,20 @@ class Orchestrator:
         self._phase = "validation"
         logger.info("Starting validation phase")
 
-        # Process validation queue
         await self.validation_worker.start()
+
+        # Subscribe to discovery events and feed them to the validation queue
+        input_queue = self.event_bus.subscribe(MediaSourceDiscoveredEvent)
+
         try:
-            await asyncio.wait_for(self.validation_worker.process_queue(), timeout=3600)
+            await asyncio.wait_for(
+                self.validation_worker.process_queue(input_queue),
+                timeout=3600,
+            )
         except (asyncio.TimeoutError, Exception):
             pass
         finally:
+            self.event_bus.unsubscribe(MediaSourceDiscoveredEvent, input_queue)
             await self.validation_worker.stop()
 
         # Count validated sources
