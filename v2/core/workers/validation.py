@@ -7,6 +7,7 @@ whitelist/blacklist rules, checks connectivity, and validates content types.
 
 import asyncio
 import logging
+import os
 import re
 from typing import Dict, List, Optional, Set, Pattern
 from urllib.parse import urlparse
@@ -104,6 +105,71 @@ class ValidationWorker:
             'connectivity_failed': 0,
             'content_type_rejected': 0,
         }
+
+    @staticmethod
+    def _parse_blacklist_file(filepath: str) -> Set[str]:
+        """Parse a blacklist file into a set of non-empty, non-comment lines."""
+        entries: Set[str] = set()
+        if not os.path.exists(filepath):
+            logger.warning(f"Blacklist file not found: {filepath}")
+            return entries
+        with open(filepath, "r", encoding="utf-8") as f:
+            for line in f:
+                stripped = line.strip()
+                if stripped and not stripped.startswith("#"):
+                    entries.add(stripped)
+        return entries
+
+    @staticmethod
+    def _parse_whitelist_file(filepath: str) -> Set[str]:
+        """Parse a whitelist file into a set of URL/pattern entries.
+
+        Handles the format:
+          - Lines starting with # are comments
+          - [KEYWORDS] section header
+          - channel_name, value (CSV format) or just value
+        Extracts all non-comment entries (both exact URLs and keywords).
+        """
+        entries: Set[str] = set()
+        if not os.path.exists(filepath):
+            logger.warning(f"Whitelist file not found: {filepath}")
+            return entries
+        with open(filepath, "r", encoding="utf-8") as f:
+            for line in f:
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#"):
+                    continue
+                if re.match(r"^\[.*\]$", stripped):
+                    continue
+                if "," in stripped:
+                    name, value = map(str.strip, stripped.split(",", 1))
+                    if value:
+                        entries.add(value)
+                else:
+                    entries.add(stripped)
+        return entries
+
+    async def load_whitelist_blacklist_files(
+        self,
+        whitelist_path: str,
+        blacklist_path: str,
+    ) -> None:
+        """Read whitelist.txt and blacklist.txt files and update the Global Data Store.
+
+        Args:
+            whitelist_path: Absolute path to whitelist.txt
+            blacklist_path: Absolute path to blacklist.txt
+        """
+        whitelist = self._parse_whitelist_file(whitelist_path)
+        blacklist = self._parse_blacklist_file(blacklist_path)
+
+        await self.store.update_whitelist(whitelist)
+        await self.store.update_blacklist(blacklist)
+
+        logger.info(
+            f"Loaded whitelist ({len(whitelist)} entries) and "
+            f"blacklist ({len(blacklist)} entries)"
+        )
 
     async def start(self):
         """Start the validation worker and create HTTP session."""

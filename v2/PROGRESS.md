@@ -87,10 +87,21 @@
   - `v2/core/__init__.py` - Added project root to sys.path for original utils imports
   - `v2/core/tests/test_result_writer.py` - 44 comprehensive tests
 
-### Feature 07: Proxy Mode
-- Dynamic inspection of URIs against whitelist/blacklist
-- Interface for future upscaler algorithms
-- Request forwarding with ad-filtering
+### Feature 07: Proxy Mode ✓
+- **ProxyWorker**: Handles proxy requests with whitelist/blacklist checking
+- **GlobalDataStore Extension**: Added `_whitelist_set` and `_blacklist_set` (Set[str]) with update/get methods
+- **ValidationWorker Update**: `load_whitelist_blacklist_files()` reads config files and updates GlobalDataStore
+- **Upscaler Interface**: Pluggable callable for URL/headers modification (future quality improvement)
+- **Access Control**: Whitelist overrides blacklist, configurable default behavior (allow/deny)
+- **Error Handling**: 403 for blocked, 502/504/500 for various upstream errors
+- **Events**: `ProxyAccessEvent` emitted for all requests (allowed/blocked)
+- **Tests**: 91 comprehensive tests (91 passing, 89.15% coverage; target: 88%)
+- **Key Files**:
+  - `v2/core/store.py` - Whitelist/blacklist set storage
+  - `v2/core/workers/validation.py` - File loading & GDS update
+  - `v2/core/workers/proxy.py` - Core proxy worker implementation
+  - `v2/core/tests/test_proxy.py` - 54 proxy-specific tests
+  - `v2/core/events.py` - Added `ProxyAccessEvent`
 
 ### Feature 08: Orchestrator & Web Service
 - Main orchestrator coordinating all stages
@@ -142,4 +153,4 @@ Continue implementing remaining features following the TDD workflow:
 5. Update TODO documents
 6. Proceed to next feature
 
-Current status: 6/8 features completed (75% complete)
+Current status: 7/8 features completed (87.5% complete)

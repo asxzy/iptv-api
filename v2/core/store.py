@@ -7,7 +7,7 @@ Supports in-memory storage with copy-on-read for consistency.
 
 import asyncio
 import logging
-from typing import Dict
+from typing import Dict, Set, Optional
 from copy import deepcopy
 
 from .types import Station, MediaSource, MediaStatus
@@ -45,6 +45,10 @@ class GlobalDataStore:
             'sources_updated': 0,
             'stations_created': 0,
         }
+        self._whitelist_init = False
+        self._blacklist_init = False
+        self._whitelist: Set[str] = set()
+        self._blacklist: Set[str] = set()
     
     async def get_or_create_station(self, name: str) -> Station:
         """Get existing station or create new one with lock."""
@@ -109,6 +113,33 @@ class GlobalDataStore:
         async with self._global_lock:
             return deepcopy(dict(self._stations))
     
+    async def update_whitelist(self, whitelist: Set[str]):
+        """Set the whitelist URL set (thread-safe)."""
+        async with self._global_lock:
+            self._whitelist = set(whitelist)
+            self._whitelist_init = True
+
+    async def update_blacklist(self, blacklist: Set[str]):
+        """Set the blacklist URL/keyword set (thread-safe)."""
+        async with self._global_lock:
+            self._blacklist = set(blacklist)
+            self._blacklist_init = True
+
+    async def get_whitelist(self) -> Set[str]:
+        """Return a copy of the current whitelist set."""
+        async with self._global_lock:
+            return set(self._whitelist)
+
+    async def get_blacklist(self) -> Set[str]:
+        """Return a copy of the current blacklist set."""
+        async with self._global_lock:
+            return set(self._blacklist)
+
+    async def are_lists_initialized(self) -> tuple[bool, bool]:
+        """Check if whitelist and blacklist have been initialized."""
+        async with self._global_lock:
+            return self._whitelist_init, self._blacklist_init
+
     async def clear(self):
         """Clear all data from the store."""
         async with self._global_lock:
@@ -116,6 +147,10 @@ class GlobalDataStore:
             self._station_locks.clear()
             self._total_sources = 0
             self._metrics.clear()
+            self._whitelist.clear()
+            self._blacklist.clear()
+            self._whitelist_init = False
+            self._blacklist_init = False
     
     def __len__(self):
         return len(self._stations)
