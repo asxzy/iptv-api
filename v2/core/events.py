@@ -208,3 +208,28 @@ class ResultWriterErrorEvent(Event):
     """Emitted when result writer encounters an error."""
     output_dir: str = ""
     error_message: str = ""
+
+
+# Proxy Events
+@dataclass(frozen=True)
+class ProxyRequestEvent(Event):
+    """Emitted when a proxy request is received."""
+    url: str = ""
+    proxy_base: str = ""
+
+
+@dataclass(frozen=True)
+class ProxyFilteredEvent(Event):
+    """Emitted when content is filtered by the proxy."""
+    url: str = ""
+    kind: str = ""  # master, media, passthrough
+    segments_removed: int = 0
+    cues_removed: int = 0
+
+
+@dataclass(frozen=True)
+class ProxyBlockedEvent(Event):
+    """Emitted when a URI is blocked by the proxy inspector."""
+    url: str = ""
+    rule: str = ""
+    rule_type: str = ""  # keyword or regex

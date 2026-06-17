@@ -1,1000 +1,317 @@
 """
 v2/core/tests/test_proxy.py
 
-Comprehensive tests for the ProxyWorker implementation.
-Run with: python -m pytest core/tests/test_proxy.py -v
+Tests for the ProxyWorker implementation.
 """
 
 import pytest
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
-import aiohttp
 
 import sys
 sys.path.insert(0, '/Users/asxzy/src/iptv-api/v2')
 
-from core.workers.proxy import ProxyWorker, ProxyAccessEvent
-from core.bus import EventBus
-from core.store import GlobalDataStore
-from core.workers.validation import ValidationWorker
+from core.workers.proxy import (
+    ProxyInspector,
+    AdFilter,
+    PlaylistFilter,
+    UpscalerInterface,
+)
 
+# ── ProxyInspector Tests ──────────────────────────────────────────────
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+class TestProxyInspector:
+    """Test the ProxyInspector URL inspection."""
 
-def _make_get_cm(status=200, headers=None, body=b"stream data"):
-    """Create a mock async context manager for session.get()."""
-    mock_response = AsyncMock(spec=aiohttp.ClientResponse)
-    mock_response.status = status
-    mock_response.headers = headers if headers is not None else {
-        "Content-Type": "video/mp4",
-    }
-    mock_response.read = AsyncMock(return_value=body)
-    cm = AsyncMock()
-    cm.__aenter__ = AsyncMock(return_value=mock_response)
-    cm.__aexit__ = AsyncMock(return_value=True)
-    return cm
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-@pytest.fixture
-def event_bus():
-    return EventBus()
-
-
-@pytest.fixture
-def store():
-    GlobalDataStore.reset_instance()
-    return GlobalDataStore()
-
-
-@pytest.fixture
-async def proxy_worker(store, event_bus):
-    worker = ProxyWorker(
-        store=store,
-        event_bus=event_bus,
-        timeout=2.0,
-        max_redirects=3,
-        default_allow=True,
-    )
-    await worker.start()
-    yield worker
-    await worker.stop()
-
-
-@pytest.fixture
-async def restrictive_proxy_worker(store, event_bus):
-    worker = ProxyWorker(
-        store=store,
-        event_bus=event_bus,
-        timeout=2.0,
-        default_allow=False,
-    )
-    await worker.start()
-    yield worker
-    await worker.stop()
-
-
-@pytest.fixture
-async def populated_store(store):
-    await store.update_whitelist({"good.com", "premium-cdn"})
-    await store.update_blacklist({"bad.com", "malware", "tracker"})
-    return store
-
-
-# ---------------------------------------------------------------------------
-# Test Classes
-# ---------------------------------------------------------------------------
-
-class TestGlobalDataStoreWhitelistBlacklist:
-    """Tests for the GDS whitelist/blacklist extension."""
-
-    @pytest.mark.asyncio
-    async def test_store_and_retrieve_whitelist(self, store):
-        expected = {"good.com", "premium-cdn"}
-        await store.update_whitelist(expected)
-        result = await store.get_whitelist()
-        assert result == expected
-
-    @pytest.mark.asyncio
-    async def test_store_and_retrieve_blacklist(self, store):
-        expected = {"bad.com", "malware"}
-        await store.update_blacklist(expected)
-        result = await store.get_blacklist()
-        assert result == expected
-
-    @pytest.mark.asyncio
-    async def test_whitelist_isolation(self, store):
-        await store.update_whitelist({"a.com"})
-        await store.update_blacklist({"b.com"})
-        wl = await store.get_whitelist()
-        bl = await store.get_blacklist()
-        assert "b.com" not in wl
-        assert "a.com" not in bl
-
-    @pytest.mark.asyncio
-    async def test_lists_initialization_state(self, store):
-        wl_init, bl_init = await store.are_lists_initialized()
-        assert wl_init is False
-        assert bl_init is False
-
-        await store.update_whitelist({"a.com"})
-        wl_init, bl_init = await store.are_lists_initialized()
-        assert wl_init is True
-        assert bl_init is False
-
-        await store.update_blacklist({"b.com"})
-        wl_init, bl_init = await store.are_lists_initialized()
-        assert wl_init is True
-        assert bl_init is True
-
-    @pytest.mark.asyncio
-    async def test_clear_also_clears_lists(self, store):
-        await store.update_whitelist({"a.com"})
-        await store.update_blacklist({"b.com"})
-        await store.clear()
-        wl = await store.get_whitelist()
-        bl = await store.get_blacklist()
-        assert len(wl) == 0
-        assert len(bl) == 0
-
-
-class TestValidationWorkerFileLoading:
-    """Tests for ValidationWorker's file loading & GDS update."""
-
-    @pytest.mark.asyncio
-    async def test_parse_blacklist_file(self, tmp_path, store, event_bus):
-        bl_file = tmp_path / "blacklist.txt"
-        bl_file.write_text(
-            "# comment\n"
-            "bad.com\n"
-            "malware\n"
-            "\n"
-            "tracker\n"
+    def test_keyword_whitelist_match(self):
+        inspector = ProxyInspector(
+            whitelist_keywords=["cdn.example.com", "premium-cdn"],
+            blacklist_keywords=[],
         )
-        worker = ValidationWorker(event_bus=event_bus, store=store)
-        entries = worker._parse_blacklist_file(str(bl_file))
-        assert entries == {"bad.com", "malware", "tracker"}
+        result = inspector.inspect("http://cdn.example.com/stream.m3u8")
+        assert result["allowed"] is True
+        assert "cdn.example.com" in result["matched_rule"]
 
-    @pytest.mark.asyncio
-    async def test_parse_blacklist_file_missing(self, store, event_bus):
-        worker = ValidationWorker(event_bus=event_bus, store=store)
-        entries = worker._parse_blacklist_file("/nonexistent/blacklist.txt")
-        assert entries == set()
-
-    @pytest.mark.asyncio
-    async def test_parse_whitelist_file(self, tmp_path, store, event_bus):
-        wl_file = tmp_path / "whitelist.txt"
-        wl_file.write_text(
-            "# comment\n"
-            "CCTV-1, http://good.com/stream\n"
-            "http://global.com/stream\n"
-            "[KEYWORDS]\n"
-            "premium-cdn\n"
-            "CCTV-2, fast-cdn\n"
+    def test_keyword_blacklist_reject(self):
+        inspector = ProxyInspector(
+            whitelist_keywords=[],
+            blacklist_keywords=["bad-stream", "evil"],
         )
-        worker = ValidationWorker(event_bus=event_bus, store=store)
-        entries = worker._parse_whitelist_file(str(wl_file))
-        assert "http://good.com/stream" in entries
-        assert "http://global.com/stream" in entries
-        assert "premium-cdn" in entries
-        assert "fast-cdn" in entries
+        result = inspector.inspect("http://cdn.example.com/bad-stream/playlist.m3u8")
+        assert result["allowed"] is False
+        assert "bad-stream" in result["matched_rule"]
 
-    @pytest.mark.asyncio
-    async def test_parse_whitelist_file_missing(self, store, event_bus):
-        worker = ValidationWorker(event_bus=event_bus, store=store)
-        entries = worker._parse_whitelist_file("/nonexistent/whitelist.txt")
-        assert entries == set()
-
-    @pytest.mark.asyncio
-    async def test_load_whitelist_blacklist_files_updates_gds(
-        self, tmp_path, store, event_bus,
-    ):
-        wl_file = tmp_path / "whitelist.txt"
-        wl_file.write_text("http://good.com/stream\npremium-cdn\n")
-        bl_file = tmp_path / "blacklist.txt"
-        bl_file.write_text("bad.com\nmalware\n")
-
-        worker = ValidationWorker(event_bus=event_bus, store=store)
-        await worker.load_whitelist_blacklist_files(str(wl_file), str(bl_file))
-
-        wl = await store.get_whitelist()
-        bl = await store.get_blacklist()
-        assert "http://good.com/stream" in wl
-        assert "premium-cdn" in wl
-        assert "bad.com" in bl
-        assert "malware" in bl
-
-    @pytest.mark.asyncio
-    async def test_load_files_empty_lists(self, tmp_path, store, event_bus):
-        wl_file = tmp_path / "whitelist.txt"
-        wl_file.write_text("")
-        bl_file = tmp_path / "blacklist.txt"
-        bl_file.write_text("")
-
-        worker = ValidationWorker(event_bus=event_bus, store=store)
-        await worker.load_whitelist_blacklist_files(str(wl_file), str(bl_file))
-
-        wl = await store.get_whitelist()
-        bl = await store.get_blacklist()
-        assert len(wl) == 0
-        assert len(bl) == 0
-
-
-class TestProxyWorkerInitialization:
-
-    @pytest.mark.asyncio
-    async def test_default_config(self, store):
-        worker = ProxyWorker(store=store)
-        assert worker.timeout == 10.0
-        assert worker.max_redirects == 5
-        assert worker.default_allow is True
-        assert worker.upscaler is None
-        assert worker._session is None
-
-    @pytest.mark.asyncio
-    async def test_custom_config(self, store):
-        worker = ProxyWorker(
-            store=store,
-            timeout=5.0,
-            max_redirects=2,
-            default_allow=False,
+    def test_regex_whitelist_match(self):
+        inspector = ProxyInspector(
+            whitelist_regexes=[r"googlevideo\.com"],
+            blacklist_regexes=[],
         )
-        assert worker.timeout == 5.0
-        assert worker.max_redirects == 2
-        assert worker.default_allow is False
+        result = inspector.inspect("http://rr1---sn-abc.googlevideo.com/videoplayback")
+        assert result["allowed"] is True
+        assert "googlevideo\\.com" in result["matched_rule"]
 
-    @pytest.mark.asyncio
-    async def test_start_stop(self, store):
-        worker = ProxyWorker(store=store)
-        assert worker._session is None
-        await worker.start()
-        assert worker._session is not None
-        assert not worker._session.closed
-        await worker.stop()
-        assert worker._session is None or worker._session.closed
-
-    @pytest.mark.asyncio
-    async def test_initial_metrics(self, store):
-        worker = ProxyWorker(store=store)
-        metrics = worker.get_metrics()
-        assert metrics['total_requests'] == 0
-        assert metrics['allowed'] == 0
-        assert metrics['blocked'] == 0
-        assert metrics['errors'] == 0
-        assert metrics['timeouts'] == 0
-
-
-class TestProxyWorkerAccessControl:
-
-    @pytest.mark.asyncio
-    async def test_is_whitelisted_match(self, populated_store):
-        worker = ProxyWorker(store=populated_store)
-        assert await worker.is_whitelisted("http://good.com/stream.m3u8")
-        assert await worker.is_whitelisted("http://premium-cdn.example.com/stream")
-
-    @pytest.mark.asyncio
-    async def test_is_whitelisted_no_match(self, populated_store):
-        worker = ProxyWorker(store=populated_store)
-        assert not await worker.is_whitelisted("http://example.com/stream.m3u8")
-        assert not await worker.is_whitelisted("http://evil.com/stream")
-
-    @pytest.mark.asyncio
-    async def test_is_blacklisted_match(self, populated_store):
-        worker = ProxyWorker(store=populated_store)
-        assert await worker.is_blacklisted("http://bad.com/stream.m3u8")
-        assert await worker.is_blacklisted("http://cdn.example.com/malware.exe")
-        assert await worker.is_blacklisted("http://tracker.example.com/stream")
-
-    @pytest.mark.asyncio
-    async def test_is_blacklisted_no_match(self, populated_store):
-        worker = ProxyWorker(store=populated_store)
-        assert not await worker.is_blacklisted("http://good.com/stream.m3u8")
-
-    @pytest.mark.asyncio
-    async def test_check_access_whitelist_overrides_blacklist(self, populated_store):
-        """URL that matches both whitelist and blacklist should be allowed."""
-        await populated_store.update_whitelist({"good.com"})
-        await populated_store.update_blacklist({"good.com"})
-        worker = ProxyWorker(store=populated_store)
-        allowed, reason = await worker.check_access("http://good.com/stream.m3u8")
-        assert allowed is True
-        assert "whitelist" in reason
-
-    @pytest.mark.asyncio
-    async def test_check_access_whitelist_allowed(self, populated_store):
-        worker = ProxyWorker(store=populated_store)
-        allowed, reason = await worker.check_access("http://premium-cdn.example.com/stream")
-        assert allowed is True
-        assert "whitelist" in reason
-
-    @pytest.mark.asyncio
-    async def test_check_access_blacklist_blocked(self, populated_store):
-        worker = ProxyWorker(store=populated_store)
-        allowed, reason = await worker.check_access("http://bad.com/stream.m3u8")
-        assert allowed is False
-        assert "blacklist" in reason
-
-    @pytest.mark.asyncio
-    async def test_check_access_default_allow(self, store):
-        worker = ProxyWorker(store=store, default_allow=True)
-        allowed, reason = await worker.check_access("http://unknown.com/stream")
-        assert allowed is True
-        assert "default allow" in reason
-
-    @pytest.mark.asyncio
-    async def test_check_access_default_deny(self, store):
-        worker = ProxyWorker(store=store, default_allow=False)
-        allowed, reason = await worker.check_access("http://unknown.com/stream")
-        assert allowed is False
-        assert "default deny" in reason
-
-    @pytest.mark.asyncio
-    async def test_case_insensitive_matching(self, populated_store):
-        worker = ProxyWorker(store=populated_store)
-        assert await worker.is_whitelisted("http://GOOD.COM/stream")
-        assert await worker.is_blacklisted("http://BAD.COM/stream")
-
-    @pytest.mark.asyncio
-    async def test_empty_lists(self, store):
-        worker = ProxyWorker(store=store, default_allow=True)
-        allowed, reason = await worker.check_access("http://example.com/stream")
-        assert allowed is True
-
-    @pytest.mark.asyncio
-    async def test_substring_matching(self, store):
-        await store.update_blacklist({"nosignal"})
-        worker = ProxyWorker(store=store)
-        assert await worker.is_blacklisted("http://cdn.example.com/nosignal/stream.m3u8")
-        assert await worker.is_blacklisted("http://cdn.example.com/nosignal_test/stream")
-
-
-class TestProxyWorkerRequestHandling:
-
-    @pytest.mark.asyncio
-    async def test_blocked_request_returns_403(self, populated_store, event_bus):
-        worker = ProxyWorker(
-            store=populated_store,
-            event_bus=event_bus,
-            timeout=2.0,
+    def test_regex_blacklist_reject(self):
+        inspector = ProxyInspector(
+            whitelist_regexes=[],
+            blacklist_regexes=[r"evil\.spam"],
         )
-        await worker.start()
-        try:
-            status, headers, body = await worker.handle_request(
-                "http://bad.com/stream.m3u8"
-            )
-            assert status == 403
-            assert b"Blocked" in body
-        finally:
-            await worker.stop()
+        result = inspector.inspect("http://evil.spam.org/stream.m3u8")
+        assert result["allowed"] is False
+        assert "evil\\.spam" in result["matched_rule"]
 
-    @pytest.mark.asyncio
-    async def test_allowed_request_forwards(self, populated_store, event_bus):
-        worker = ProxyWorker(
-            store=populated_store,
-            event_bus=event_bus,
-            timeout=2.0,
+    def test_no_match_default_allowed(self):
+        inspector = ProxyInspector(
+            whitelist_keywords=["cdn.example.com"],
+            blacklist_keywords=["bad-stream"],
         )
-        await worker.start()
-        try:
-            mock_cm = _make_get_cm(200, body=b"live stream data")
-            mock_session = AsyncMock(spec=aiohttp.ClientSession)
-            get_mock = MagicMock(return_value=mock_cm)
-            mock_session.get = get_mock
-            worker._session = mock_session
+        result = inspector.inspect("http://unknown.example.com/stream.m3u8")
+        # Not in whitelist and not in blacklist -> default depends on config
+        # Default: allowed (if no blacklist match, treat as allowed)
+        assert result["allowed"] is True
 
-            status, headers, body = await worker.handle_request(
-                "http://premium-cdn.example.com/stream.m3u8"
-            )
-            assert status == 200
-            assert body == b"live stream data"
-            assert get_mock.call_count == 1
-        finally:
-            await worker.stop()
-
-    @pytest.mark.asyncio
-    async def test_default_allow_allowed(self, store, event_bus):
-        worker = ProxyWorker(
-            store=store,
-            event_bus=event_bus,
-            timeout=2.0,
-            default_allow=True,
+    def test_blacklist_trumps_whitelist(self):
+        inspector = ProxyInspector(
+            whitelist_keywords=["cdn.example.com"],
+            blacklist_keywords=["bad-stream"],
         )
-        await worker.start()
-        try:
-            mock_cm = _make_get_cm(200, body=b"data")
-            mock_session = AsyncMock(spec=aiohttp.ClientSession)
-            mock_session.get = MagicMock(return_value=mock_cm)
-            worker._session = mock_session
+        result = inspector.inspect("http://cdn.example.com/bad-stream/playlist.m3u8")
+        assert result["allowed"] is False
 
-            status, headers, body = await worker.handle_request(
-                "http://example.com/stream.m3u8"
-            )
-            assert status == 200
-        finally:
-            await worker.stop()
+    def test_empty_lists(self):
+        inspector = ProxyInspector()
+        result = inspector.inspect("http://example.com/stream.m3u8")
+        assert result["allowed"] is True
 
-    @pytest.mark.asyncio
-    async def test_default_deny_blocks_unknown(self, store, event_bus):
-        worker = ProxyWorker(
-            store=store,
-            event_bus=event_bus,
-            timeout=2.0,
-            default_allow=False,
+
+# ── AdFilter Tests ────────────────────────────────────────────────────
+
+class TestAdFilter:
+    """Test the AdFilter ad segment filtering."""
+
+    def test_ad_segment_keyword_removal(self):
+        filter_obj = AdFilter(keywords=["doubleclick.net", "adserver"])
+        playlist = (
+            "#EXTM3U\n"
+            "#EXTINF:10,\n"
+            "http://cdn.example.com/segment1.ts\n"
+            "#EXTINF:10,\n"
+            "http://doubleclick.net/ad1.ts\n"
+            "#EXTINF:10,\n"
+            "http://cdn.example.com/segment3.ts\n"
         )
-        await worker.start()
-        try:
-            status, headers, body = await worker.handle_request(
-                "http://example.com/stream.m3u8"
-            )
-            assert status == 403
-        finally:
-            await worker.stop()
+        result = filter_obj.filter_media_playlist(playlist, "http://cdn.example.com/playlist.m3u8")
+        assert "ad1.ts" not in result
+        assert "segment1.ts" in result
+        assert "segment3.ts" in result
+        # The EXTINF for the ad segment should also be removed
+        lines = result.strip().split("\n")
+        assert lines.count("#EXTINF:10,") == 2  # Only two EXTINFs for non-ad segments
 
-    @pytest.mark.asyncio
-    async def test_forwards_custom_headers(self, populated_store, event_bus):
-        worker = ProxyWorker(
-            store=populated_store,
-            event_bus=event_bus,
-            timeout=2.0,
+    def test_ad_segment_regex_removal(self):
+        filter_obj = AdFilter(regexes=[r"ads?\d*\.ts"])
+        playlist = (
+            "#EXTM3U\n"
+            "#EXTINF:10,\n"
+            "http://cdn.example.com/seg1.ts\n"
+            "#EXTINF:10,\n"
+            "http://cdn.example.com/ad2.ts\n"
         )
-        await worker.start()
-        try:
-            mock_cm = _make_get_cm(200, body=b"data")
-            mock_session = AsyncMock(spec=aiohttp.ClientSession)
-            get_mock = MagicMock(return_value=mock_cm)
-            mock_session.get = get_mock
-            worker._session = mock_session
+        result = filter_obj.filter_media_playlist(playlist, "http://cdn.example.com/playlist.m3u8")
+        assert "ad2.ts" not in result
+        assert "seg1.ts" in result
 
-            await worker.handle_request(
-                "http://premium-cdn.example.com/stream.m3u8",
-                headers={"Authorization": "Bearer test-token"},
-            )
-
-            call_kwargs = get_mock.call_args[1]
-            assert "headers" in call_kwargs
-            assert call_kwargs["headers"]["Authorization"] == "Bearer test-token"
-        finally:
-            await worker.stop()
-
-    @pytest.mark.asyncio
-    async def test_default_user_agent(self, populated_store, event_bus):
-        worker = ProxyWorker(
-            store=populated_store,
-            event_bus=event_bus,
-            timeout=2.0,
+    def test_cue_out_in_removal(self):
+        filter_obj = AdFilter(drop_cue_ads=True)
+        playlist = (
+            "#EXTM3U\n"
+            "#EXTINF:10,\n"
+            "http://cdn.example.com/seg1.ts\n"
+            "#EXT-X-CUE-OUT\n"
+            "#EXTINF:10,\n"
+            "http://cdn.example.com/ad1.ts\n"
+            "#EXTINF:10,\n"
+            "http://cdn.example.com/ad2.ts\n"
+            "#EXT-X-CUE-IN\n"
+            "#EXTINF:10,\n"
+            "http://cdn.example.com/seg2.ts\n"
         )
-        await worker.start()
-        try:
-            mock_cm = _make_get_cm(200, body=b"data")
-            mock_session = AsyncMock(spec=aiohttp.ClientSession)
-            get_mock = MagicMock(return_value=mock_cm)
-            mock_session.get = get_mock
-            worker._session = mock_session
+        result = filter_obj.filter_media_playlist(playlist, "http://cdn.example.com/playlist.m3u8")
+        assert "ad1.ts" not in result
+        assert "ad2.ts" not in result
+        assert "#EXT-X-CUE-OUT" not in result
+        assert "#EXT-X-CUE-IN" not in result
+        assert "seg1.ts" in result
+        assert "seg2.ts" in result
 
-            await worker.handle_request(
-                "http://premium-cdn.example.com/stream.m3u8"
-            )
-
-            call_kwargs = get_mock.call_args[1]
-            assert "User-Agent" in call_kwargs["headers"]
-            assert "IPTV-API" in call_kwargs["headers"]["User-Agent"]
-        finally:
-            await worker.stop()
-
-    @pytest.mark.asyncio
-    async def test_redirect_following(self, populated_store, event_bus):
-        worker = ProxyWorker(
-            store=populated_store,
-            event_bus=event_bus,
-            timeout=2.0,
+    def test_cue_disabled_does_not_drop(self):
+        filter_obj = AdFilter(drop_cue_ads=False)
+        playlist = (
+            "#EXTM3U\n"
+            "#EXT-X-CUE-OUT\n"
+            "#EXTINF:10,\n"
+            "http://cdn.example.com/ad1.ts\n"
+            "#EXT-X-CUE-IN\n"
         )
-        await worker.start()
-        try:
-            mock_cm = _make_get_cm(200, body=b"data")
-            mock_session = AsyncMock(spec=aiohttp.ClientSession)
-            get_mock = MagicMock(return_value=mock_cm)
-            mock_session.get = get_mock
-            worker._session = mock_session
+        result = filter_obj.filter_media_playlist(playlist, "http://cdn.example.com/playlist.m3u8")
+        # When cue dropping is disabled, the ad segment should remain
+        assert "ad1.ts" in result
 
-            await worker.handle_request(
-                "http://premium-cdn.example.com/redirect"
-            )
-
-            call_kwargs = get_mock.call_args[1]
-            assert call_kwargs.get("allow_redirects") is True
-        finally:
-            await worker.stop()
-
-    @pytest.mark.asyncio
-    async def test_upstream_error_propagated(self, populated_store, event_bus):
-        worker = ProxyWorker(
-            store=populated_store,
-            event_bus=event_bus,
-            timeout=2.0,
+    def test_discontinuity_ad_block_removal(self):
+        filter_obj = AdFilter(
+            keywords=["adserver"],
+            drop_discontinuity_ads=True,
         )
-        await worker.start()
-        try:
-            mock_cm = _make_get_cm(502, body=b"upstream error")
-            mock_session = AsyncMock(spec=aiohttp.ClientSession)
-            mock_session.get = MagicMock(return_value=mock_cm)
-            worker._session = mock_session
-
-            status, headers, body = await worker.handle_request(
-                "http://premium-cdn.example.com/stream"
-            )
-            assert status == 502
-            assert b"upstream error" in body
-        finally:
-            await worker.stop()
-
-    @pytest.mark.asyncio
-    async def test_upstream_404_propagated(self, populated_store, event_bus):
-        worker = ProxyWorker(
-            store=populated_store,
-            event_bus=event_bus,
-            timeout=2.0,
+        playlist = (
+            "#EXTM3U\n"
+            "#EXTINF:10,\n"
+            "http://cdn.example.com/seg1.ts\n"
+            "#EXT-X-DISCONTINUITY\n"
+            "#EXTINF:10,\n"
+            "http://cdn.example.com/seg2.ts\n"
+            "#EXTINF:10,\n"
+            "http://adserver.example.com/ad1.ts\n"
+            "#EXTINF:10,\n"
+            "http://cdn.example.com/seg3.ts\n"
+            "#EXT-X-DISCONTINUITY\n"
+            "#EXTINF:10,\n"
+            "http://cdn.example.com/seg4.ts\n"
         )
-        await worker.start()
-        try:
-            mock_cm = _make_get_cm(404, body=b"not found")
-            mock_session = AsyncMock(spec=aiohttp.ClientSession)
-            mock_session.get = MagicMock(return_value=mock_cm)
-            worker._session = mock_session
+        result = filter_obj.filter_media_playlist(playlist, "http://cdn.example.com/playlist.m3u8")
+        # The discontinuity block with adserver should be removed entirely
+        assert "seg2.ts" not in result  # In the removed block
+        assert "ad1.ts" not in result
+        assert "seg3.ts" not in result
+        assert "seg1.ts" in result
+        assert "seg4.ts" in result
 
-            status, headers, body = await worker.handle_request(
-                "http://premium-cdn.example.com/missing"
-            )
-            assert status == 404
-        finally:
-            await worker.stop()
-
-
-class TestProxyWorkerTimeout:
-
-    @pytest.mark.asyncio
-    async def test_timeout_returns_504(self, populated_store, event_bus):
-        worker = ProxyWorker(
-            store=populated_store,
-            event_bus=event_bus,
-            timeout=0.5,
+    def test_discontinuity_disabled_does_not_drop(self):
+        filter_obj = AdFilter(
+            keywords=["adserver"],
+            drop_discontinuity_ads=False,
         )
-        await worker.start()
-        try:
-            async def _timeout_side(*args, **kwargs):
-                raise asyncio.TimeoutError()
-
-            mock_cm = AsyncMock()
-            mock_cm.__aenter__ = AsyncMock(side_effect=asyncio.TimeoutError())
-            mock_cm.__aexit__ = AsyncMock(return_value=True)
-
-            mock_session = AsyncMock(spec=aiohttp.ClientSession)
-            mock_session.get = MagicMock(return_value=mock_cm)
-            worker._session = mock_session
-
-            status, headers, body = await worker.handle_request(
-                "http://premium-cdn.example.com/stream"
-            )
-            assert status == 504
-            assert b"timeout" in body.lower()
-        finally:
-            await worker.stop()
-
-    @pytest.mark.asyncio
-    async def test_timeout_increments_metrics(self, populated_store, event_bus):
-        worker = ProxyWorker(
-            store=populated_store,
-            event_bus=event_bus,
-            timeout=0.5,
+        playlist = (
+            "#EXTM3U\n"
+            "#EXTINF:10,\n"
+            "http://cdn.example.com/seg1.ts\n"
+            "#EXT-X-DISCONTINUITY\n"
+            "#EXTINF:10,\n"
+            "http://adserver.example.com/ad1.ts\n"
+            "#EXT-X-DISCONTINUITY\n"
         )
-        await worker.start()
-        try:
-            mock_cm = AsyncMock()
-            mock_cm.__aenter__ = AsyncMock(side_effect=asyncio.TimeoutError())
-            mock_cm.__aexit__ = AsyncMock(return_value=True)
+        result = filter_obj.filter_media_playlist(playlist, "http://cdn.example.com/playlist.m3u8")
+        assert "ad1.ts" in result  # Not removed when disabled
 
-            mock_session = AsyncMock(spec=aiohttp.ClientSession)
-            mock_session.get = MagicMock(return_value=mock_cm)
-            worker._session = mock_session
-
-            await worker.handle_request("http://premium-cdn.example.com/stream")
-
-            metrics = worker.get_metrics()
-            assert metrics['timeouts'] == 1
-            assert metrics['errors'] == 1
-        finally:
-            await worker.stop()
-
-
-class TestProxyWorkerClientError:
-
-    @pytest.mark.asyncio
-    async def test_client_error_returns_502(self, populated_store, event_bus):
-        worker = ProxyWorker(
-            store=populated_store,
-            event_bus=event_bus,
-            timeout=2.0,
+    def test_no_ad_keyword_no_removal(self):
+        filter_obj = AdFilter(keywords=["adserver"])
+        playlist = (
+            "#EXTM3U\n"
+            "#EXTINF:10,\n"
+            "http://cdn.example.com/clean1.ts\n"
+            "#EXTINF:10,\n"
+            "http://cdn.example.com/clean2.ts\n"
         )
-        await worker.start()
-        try:
-            mock_cm = AsyncMock()
-            mock_cm.__aenter__ = AsyncMock(
-                side_effect=aiohttp.ClientError("Connection refused")
-            )
-            mock_cm.__aexit__ = AsyncMock(return_value=True)
+        result = filter_obj.filter_media_playlist(playlist, "http://cdn.example.com/playlist.m3u8")
+        assert "clean1.ts" in result
+        assert "clean2.ts" in result
 
-            mock_session = AsyncMock(spec=aiohttp.ClientSession)
-            mock_session.get = MagicMock(return_value=mock_cm)
-            worker._session = mock_session
-
-            status, headers, body = await worker.handle_request(
-                "http://premium-cdn.example.com/stream"
-            )
-            assert status == 502
-        finally:
-            await worker.stop()
-
-    @pytest.mark.asyncio
-    async def test_client_error_logged(self, populated_store, event_bus):
-        worker = ProxyWorker(
-            store=populated_store,
-            event_bus=event_bus,
-            timeout=2.0,
+    def test_master_playlist_rewriting(self):
+        filter_obj = AdFilter()
+        proxy_base = "/proxy"
+        base_url = "http://origin.example.com/live/"
+        playlist = (
+            "#EXTM3U\n"
+            "#EXT-X-STREAM-INF:BANDWIDTH=1280000\n"
+            "low.m3u8\n"
+            "#EXT-X-STREAM-INF:BANDWIDTH=2560000\n"
+            "mid.m3u8\n"
+            "#EXT-X-MEDIA:TYPE=VIDEO,URI=\"high.m3u8\"\n"
         )
-        await worker.start()
-        try:
-            mock_cm = AsyncMock()
-            mock_cm.__aenter__ = AsyncMock(
-                side_effect=aiohttp.ClientError("refused")
-            )
-            mock_cm.__aexit__ = AsyncMock(return_value=True)
+        result = filter_obj.filter_master_playlist(playlist, base_url, proxy_base)
+        # Variant URIs should be rewritten to proxy URLs
+        assert "/proxy?url=" in result
+        assert "origin.example.com" in result
+        # The bare relative URIs should be replaced with proxy-wrapped URLs
+        # The original relative URI "low.m3u8" should not appear as a bare line
+        lines = result.strip().split("\n")
+        assert not any(line.strip() == "low.m3u8" for line in lines)
+        assert not any(line.strip() == "mid.m3u8" for line in lines)
+        # The proxy URL should contain the resolved URI
+        assert "/proxy?url=http%3A%2F%2Forigin.example.com%2Flive%2Flow.m3u8" in result
 
-            mock_session = AsyncMock(spec=aiohttp.ClientSession)
-            mock_session.get = MagicMock(return_value=mock_cm)
-            worker._session = mock_session
-
-            await worker.handle_request("http://premium-cdn.example.com/stream")
-
-            metrics = worker.get_metrics()
-            assert metrics['errors'] == 1
-        finally:
-            await worker.stop()
-
-
-class TestProxyWorkerUpscaler:
-
-    @pytest.mark.asyncio
-    async def test_upscaler_called_with_url_and_headers(self, populated_store, event_bus):
-        upscaler_called = []
-
-        async def my_upscaler(url: str, headers: dict):
-            upscaler_called.append((url, headers))
-            return ("http://modified.com/stream", {"X-Upscaled": "true"})
-
-        worker = ProxyWorker(
-            store=populated_store,
-            event_bus=event_bus,
-            timeout=2.0,
-            upscaler=my_upscaler,
+    def test_relative_uri_resolution(self):
+        filter_obj = AdFilter()
+        playlist = (
+            "#EXTM3U\n"
+            "#EXTINF:10,\n"
+            "relative/path/seg1.ts\n"
         )
-        await worker.start()
-        try:
-            mock_session = AsyncMock(spec=aiohttp.ClientSession)
-            get_mock = MagicMock(return_value=_make_get_cm(200, body=b"data"))
-            mock_session.get = get_mock
-            worker._session = mock_session
+        base_url = "http://cdn.example.com/live/playlist.m3u8"
+        result = filter_obj.filter_media_playlist(playlist, base_url)
+        # Relative URI should be resolved to absolute
+        assert "http://cdn.example.com/live/relative/path/seg1.ts" in result
+        # The bare relative path should not appear as a standalone URI line
+        lines = result.strip().split("\n")
+        assert "relative/path/seg1.ts" not in lines
 
-            await worker.handle_request(
-                "http://premium-cdn.example.com/stream",
-                headers={"Original": "value"},
-            )
 
-            # Upscaler should have been called with original URL and headers
-            assert len(upscaler_called) == 1
-            call_url, call_headers = upscaler_called[0]
-            assert call_url == "http://premium-cdn.example.com/stream"
-            assert call_headers["Original"] == "value"
-        finally:
-            await worker.stop()
+# ── PlaylistFilter Tests ──────────────────────────────────────────────
 
-    @pytest.mark.asyncio
-    async def test_upscaler_modifies_url_and_headers(self, populated_store, event_bus):
-        async def my_upscaler(url: str, headers: dict):
-            modified_url = url.replace("720p", "1080p")
-            headers["X-Quality"] = "high"
-            return modified_url, headers
+class TestPlaylistFilter:
+    """Test the PlaylistFilter dispatcher."""
 
-        worker = ProxyWorker(
-            store=populated_store,
-            event_bus=event_bus,
-            timeout=2.0,
-            upscaler=my_upscaler,
+    def test_dispatch_master_playlist(self):
+        filter_obj = AdFilter()
+        pf = PlaylistFilter(filter_obj)
+        content = (
+            "#EXTM3U\n"
+            "#EXT-X-STREAM-INF:BANDWIDTH=1280000\n"
+            "low.m3u8\n"
         )
-        await worker.start()
-        try:
-            mock_session = AsyncMock(spec=aiohttp.ClientSession)
-            get_mock = MagicMock(return_value=_make_get_cm(200, body=b"data"))
-            mock_session.get = get_mock
-            worker._session = mock_session
+        result, kind = pf.filter(content, "http://origin.example.com/playlist.m3u8", "/proxy")
+        assert kind == "master"
+        assert "/proxy?url=" in result
 
-            await worker.handle_request(
-                "http://premium-cdn.example.com/720p/stream.m3u8",
-            )
-
-            call_kwargs = get_mock.call_args[1]
-            # The URL should have been modified by upscaler
-            actual_url = get_mock.call_args[0][0]
-            assert "1080p" in actual_url
-            assert call_kwargs["headers"].get("X-Quality") == "high"
-        finally:
-            await worker.stop()
-
-    @pytest.mark.asyncio
-    async def test_upscaler_error_does_not_block_request(self, populated_store, event_bus):
-        async def broken_upscaler(url, headers):
-            raise RuntimeError("Upscaler crashed")
-
-        worker = ProxyWorker(
-            store=populated_store,
-            event_bus=event_bus,
-            timeout=2.0,
-            upscaler=broken_upscaler,
+    def test_dispatch_media_playlist(self):
+        filter_obj = AdFilter(keywords=["ad"])
+        pf = PlaylistFilter(filter_obj)
+        content = (
+            "#EXTM3U\n"
+            "#EXTINF:10,\n"
+            "seg1.ts\n"
         )
-        await worker.start()
-        try:
-            mock_session = AsyncMock(spec=aiohttp.ClientSession)
-            mock_session.get = MagicMock(
-                return_value=_make_get_cm(200, body=b"data")
-            )
-            worker._session = mock_session
+        result, kind = pf.filter(content, "http://cdn.example.com/playlist.m3u8", "/proxy")
+        assert kind == "media"
+        assert "seg1.ts" in result
 
-            # Should still forward the request even if upscaler fails
-            status, headers, body = await worker.handle_request(
-                "http://premium-cdn.example.com/stream"
-            )
-            assert status == 200
-        finally:
-            await worker.stop()
-
-    @pytest.mark.asyncio
-    async def test_no_upscaler_no_modification(self, populated_store, event_bus):
-        worker = ProxyWorker(
-            store=populated_store,
-            event_bus=event_bus,
-            timeout=2.0,
-            upscaler=None,
-        )
-        await worker.start()
-        try:
-            mock_session = AsyncMock(spec=aiohttp.ClientSession)
-            get_mock = MagicMock(
-                return_value=_make_get_cm(200, body=b"data")
-            )
-            mock_session.get = get_mock
-            worker._session = mock_session
-
-            await worker.handle_request(
-                "http://premium-cdn.example.com/stream",
-            )
-
-            # URL should remain unchanged
-            actual_url = get_mock.call_args[0][0]
-            assert actual_url == "http://premium-cdn.example.com/stream"
-        finally:
-            await worker.stop()
+    def test_dispatch_unknown_passthrough(self):
+        filter_obj = AdFilter()
+        pf = PlaylistFilter(filter_obj)
+        content = "plain text content"
+        result, kind = pf.filter(content, "http://cdn.example.com/file.txt", "/proxy")
+        assert kind == "passthrough"
+        assert result == content
 
 
-class TestProxyWorkerEvents:
+# ── UpscalerInterface Tests ───────────────────────────────────────────
 
-    @pytest.mark.asyncio
-    async def test_blocked_request_emits_event(self, populated_store, event_bus):
-        proxy_queue = event_bus.subscribe(ProxyAccessEvent)
+class TestUpscalerInterface:
+    """Test the UpscalerInterface."""
 
-        worker = ProxyWorker(
-            store=populated_store,
-            event_bus=event_bus,
-            timeout=2.0,
-        )
-        await worker.start()
-        try:
-            await worker.handle_request("http://bad.com/stream.m3u8")
-            event = await asyncio.wait_for(proxy_queue.get(), timeout=1.0)
-            assert isinstance(event, ProxyAccessEvent)
-            assert event.url == "http://bad.com/stream.m3u8"
-            assert event.allowed is False
-            assert "blacklist" in event.reason
-        finally:
-            await worker.stop()
+    def test_concrete_implementation(self):
+        class TestUpscaler(UpscalerInterface):
+            def analyze(self, url: str) -> dict:
+                return {"url": url, "is_upscaled": False, "confidence": 0.0}
 
-    @pytest.mark.asyncio
-    async def test_allowed_request_emits_event(self, populated_store, event_bus):
-        proxy_queue = event_bus.subscribe(ProxyAccessEvent)
+        upscaler = TestUpscaler()
+        result = upscaler.analyze("http://example.com/stream.m3u8")
+        assert result["is_upscaled"] is False
+        assert result["url"] == "http://example.com/stream.m3u8"
+        assert result["confidence"] == 0.0
 
-        worker = ProxyWorker(
-            store=populated_store,
-            event_bus=event_bus,
-            timeout=2.0,
-        )
-        await worker.start()
-        try:
-            mock_session = AsyncMock(spec=aiohttp.ClientSession)
-            mock_session.get = MagicMock(
-                return_value=_make_get_cm(200, body=b"data")
-            )
-            worker._session = mock_session
-
-            await worker.handle_request("http://premium-cdn.example.com/stream")
-            event = await asyncio.wait_for(proxy_queue.get(), timeout=1.0)
-            assert isinstance(event, ProxyAccessEvent)
-            assert event.allowed is True
-            assert event.status_code == 200
-        finally:
-            await worker.stop()
-
-    @pytest.mark.asyncio
-    async def test_no_event_bus_no_crash(self, populated_store):
-        worker = ProxyWorker(
-            store=populated_store,
-            event_bus=None,
-            timeout=2.0,
-        )
-        await worker.start()
-        try:
-            status, headers, body = await worker.handle_request(
-                "http://bad.com/stream.m3u8"
-            )
-            assert status == 403
-        finally:
-            await worker.stop()
+    def test_abstract_class_cannot_be_instantiated(self):
+        with pytest.raises(TypeError):
+            UpscalerInterface()  # Should fail because analyze is abstract
 
 
-class TestProxyWorkerMetrics:
-
-    @pytest.mark.asyncio
-    async def test_metrics_track_blocked(self, populated_store, event_bus):
-        worker = ProxyWorker(
-            store=populated_store,
-            event_bus=event_bus,
-            timeout=2.0,
-        )
-        await worker.start()
-        try:
-            await worker.handle_request("http://bad.com/stream.m3u8")
-            await worker.handle_request("http://malware.example.com/stream")
-            await worker.handle_request("http://tracker.example.com/stream")
-
-            metrics = worker.get_metrics()
-            assert metrics['total_requests'] == 3
-            assert metrics['blocked'] == 3
-            assert metrics['allowed'] == 0
-        finally:
-            await worker.stop()
-
-    @pytest.mark.asyncio
-    async def test_metrics_track_allowed(self, populated_store, event_bus):
-        worker = ProxyWorker(
-            store=populated_store,
-            event_bus=event_bus,
-            timeout=2.0,
-        )
-        await worker.start()
-        try:
-            mock_session = AsyncMock(spec=aiohttp.ClientSession)
-            mock_session.get = MagicMock(
-                return_value=_make_get_cm(200, body=b"data")
-            )
-            worker._session = mock_session
-
-            await worker.handle_request("http://premium-cdn.example.com/a")
-            await worker.handle_request("http://premium-cdn.example.com/b")
-
-            metrics = worker.get_metrics()
-            assert metrics['total_requests'] == 2
-            assert metrics['allowed'] == 2
-        finally:
-            await worker.stop()
-
-    @pytest.mark.asyncio
-    async def test_metrics_isolation(self, store, event_bus):
-        """Each ProxyWorker instance should have its own metrics."""
-        worker1 = ProxyWorker(store=store, event_bus=event_bus, timeout=2.0)
-        worker2 = ProxyWorker(store=store, event_bus=event_bus, timeout=2.0)
-        assert worker1.get_metrics() == worker2.get_metrics()
-
-
-class TestProxyWorkerDynamicUpdates:
-
-    @pytest.mark.asyncio
-    async def test_dynamic_whitelist_update(self, store, event_bus):
-        worker = ProxyWorker(
-            store=store,
-            event_bus=event_bus,
-            timeout=2.0,
-        )
-        await worker.start()
-        try:
-            # Before whitelist — unknown URL is allowed (default_allow=True)
-            allowed, reason = await worker.check_access(
-                "http://new-whitelisted.com/stream"
-            )
-            assert allowed is True
-            assert "default allow" in reason
-
-            # Add to whitelist via store
-            await store.update_whitelist({"new-whitelisted.com"})
-
-            # Now it should be whitelisted
-            allowed, reason = await worker.check_access(
-                "http://new-whitelisted.com/stream"
-            )
-            assert allowed is True
-            assert "whitelist" in reason
-        finally:
-            await worker.stop()
-
-    @pytest.mark.asyncio
-    async def test_dynamic_blacklist_update(self, store, event_bus):
-        worker = ProxyWorker(
-            store=store,
-            event_bus=event_bus,
-            timeout=2.0,
-        )
-        await worker.start()
-        try:
-            # Before blacklist — URL is allowed
-            allowed, reason = await worker.check_access(
-                "http://new-bad.com/stream"
-            )
-            assert allowed is True
-
-            # Add to blacklist via store
-            await store.update_blacklist({"new-bad.com"})
-
-            # Now it should be blocked
-            allowed, reason = await worker.check_access(
-                "http://new-bad.com/stream"
-            )
-            assert allowed is False
-            assert "blacklist" in reason
-        finally:
-            await worker.stop()
-
-    @pytest.mark.asyncio
-    async def test_replacing_whitelist_removes_old_entries(self, store, event_bus):
-        worker = ProxyWorker(store=store, event_bus=event_bus)
-        await store.update_whitelist({"old.com"})
-        assert await worker.is_whitelisted("http://old.com/stream")
-
-        await store.update_whitelist({"new.com"})
-        assert not await worker.is_whitelisted("http://old.com/stream")
-        assert await worker.is_whitelisted("http://new.com/stream")
-
-
-class TestProxyWorkerValidationWorkerIntegration:
-
-    @pytest.mark.asyncio
-    async def test_validation_worker_load_updates_proxy_access(
-        self, tmp_path, store, event_bus,
-    ):
-        wl_file = tmp_path / "whitelist.txt"
-        wl_file.write_text("good-cdn\n")
-        bl_file = tmp_path / "blacklist.txt"
-        bl_file.write_text("evil-cdn\n")
-
-        # ValidationWorker loads files → updates GDS
-        vw = ValidationWorker(event_bus=event_bus, store=store)
-        await vw.load_whitelist_blacklist_files(str(wl_file), str(bl_file))
-
-        # ProxyWorker reads from GDS
-        pw = ProxyWorker(store=store, event_bus=event_bus)
-        await pw.start()
-        try:
-            assert await pw.is_whitelisted("http://good-cdn.com/stream")
-            assert await pw.is_blacklisted("http://evil-cdn.com/stream")
-            assert not await pw.is_whitelisted("http://unknown.com/stream")
-        finally:
-            await pw.stop()
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

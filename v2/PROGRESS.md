@@ -84,13 +84,18 @@
   - `v2/core/workers/result_writer.py`
   - `v2/core/tests/test_result_writer.py`
 
-### Feature 07: Proxy Mode
-- Dynamic inspection of URIs against whitelist/blacklist
-- Interface for future upscaler algorithms
-- Request forwarding with ad-filtering
-- Dynamic inspection of URIs against whitelist/blacklist
-- Interface for future upscaler algorithms
-- Request forwarding with ad-filtering
+### Feature 07: Proxy Mode ✓
+- **ProxyWorker**: URL inspection, ad filtering, playlist rewriting, upscaler interface
+- **Components**:
+  - `ProxyInspector`: Keyword/regex whitelist/blacklist URL inspection
+  - `AdFilter`: Ad segment filtering via keywords, regex, CUE-OUT/IN, discontinuity blocks
+  - `PlaylistFilter`: Master/media playlist dispatching and proxy rewriting
+  - `UpscalerInterface`: Abstract base for future upscaler algorithms
+- **Events**: ProxyRequestEvent, ProxyFilteredEvent, ProxyBlockedEvent
+- **Tests**: 21/21 passing
+- **Key Files**:
+  - `v2/core/workers/proxy.py`
+  - `v2/core/tests/test_proxy.py`
 
 ### Feature 08: Orchestrator & Web Service
 - Main orchestrator coordinating all stages
@@ -142,4 +147,4 @@ Continue implementing remaining features following the TDD workflow:
 5. Update TODO documents
 6. Proceed to next feature
 
-Current status: 6/8 features completed (75% complete)
+Current status: 7/8 features completed (87.5% complete)

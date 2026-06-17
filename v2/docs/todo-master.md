@@ -55,12 +55,15 @@
 - [x] Coverage check (no regressions, 146 total tests pass)
 
 ## Feature 07: Proxy Mode
-- [ ] Spec document
-- [ ] TDD document
-- [ ] TODO document
-- [ ] Implement proxy inspector
-- [ ] Write tests (aiming for 100% coverage)
-- [ ] Coverage check
+- [x] Spec document
+- [x] TDD document
+- [x] TODO document
+- [x] Implement ProxyInspector
+- [x] Implement AdFilter (ad segment + CUE/Discontinuity filtering)
+- [x] Implement PlaylistFilter (master/media dispatching)
+- [x] Implement UpscalerInterface (abstract base)
+- [x] Write tests (21 tests, all passing)
+- [x] Coverage check (no regressions, 167 total tests pass)
 
 ## Feature 08: Orchestrator & Web Service
 - [ ] Spec document
