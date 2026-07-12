@@ -3,7 +3,14 @@
 # This is a list of subscription sources, with one subscription address per line
 # Supports setting UA: https://xxx.com/subscribe.m3u UA="xxx"
 # Local test upstream
-http://192.168.1.198:8888
+https://raw.githubusercontent.com/vbskycn/iptv/master/tv/iptv6.txt
+# https://live.hacks.tools/tv/iptv6.txt
+https://raw.githubusercontent.com/vbskycn/iptv/master/tv/iptv4.txt
+# https://live.hacks.tools/tv/iptv4.txt
+# https://live.zbds.top/tv/iptv4.m3u
+https://raw.githubusercontent.com/alexlin1688/alexlin/refs/heads/main/alexlin.m3u?token=GHSAT0AAAAAADIDFIC54XX6X2QW53YHU53Q2HDU75Q
+
+https://raw.githubusercontent.com/Guovin/iptv-database/master/result.txt
 https://raw.githubusercontent.com/Guovin/iptv-api/gd/output/result.m3u
 https://iptv-org.github.io/iptv/countries/cn.m3u
 https://raw.githubusercontent.com/CCSH/IPTV/main/live.m3u
@@ -16,13 +23,10 @@ https://raw.githubusercontent.com/iptv-org/iptv/gh-pages/countries/cn.m3u
 https://raw.githubusercontent.com/iptv-org/iptv/master/streams/cn.m3u
 https://raw.githubusercontent.com/suxuang/myIPTV/main/ipv4.m3u
 https://raw.githubusercontent.com/kimwang1978/collect-tv-txt/main/others_output.txt
-https://raw.githubusercontent.com/vbskycn/iptv/master/tv/iptv4.txt
-https://live.hacks.tools/tv/iptv4.txt
 https://live.fanmingming.com/tv/m3u/itv.m3u
 https://live.fanmingming.cn/tv/m3u/ipv6.m3u
 https://raw.githubusercontent.com/YueChan/Live/main/IPTV.m3u
 https://raw.githubusercontent.com/hujingguang/ChinaIPTV/main/cnTV_AutoUpdate.m3u8
-https://live.zbds.top/tv/iptv4.m3u
 https://raw.githubusercontent.com/imDazui/Tvlist-awesome-m3u-m3u8/master/m3u/%E5%9B%BD%E5%86%85%E7%94%B5%E8%A7%86%E5%8F%B0202509.m3u
 https://raw.githubusercontent.com/imDazui/Tvlist-awesome-m3u-m3u8/master/m3u/%E7%A7%BB%E5%8A%A8IPV6IPTV%E7%9B%B4%E6%92%AD%E6%BA%90.m3u
 https://raw.githubusercontent.com/imDazui/Tvlist-awesome-m3u-m3u8/master/m3u/%E7%A7%BB%E5%8A%A8ipv6.m3u
@@ -38,14 +42,11 @@ https://raw.githubusercontent.com/imDazui/Tvlist-awesome-m3u-m3u8/master/m3u/500
 https://raw.githubusercontent.com/imDazui/Tvlist-awesome-m3u-m3u8/master/m3u/%E5%A4%AE%E8%A7%86+%E5%8D%AB%E8%A7%86+NewTV%E5%B9%BF%E8%A5%BF%E7%A7%BB%E5%8A%A8%E6%BA%90.m3u
 https://raw.githubusercontent.com/imDazui/Tvlist-awesome-m3u-m3u8/master/m3u/CCTV+%E5%8D%AB%E8%A7%86+%E5%8C%97%E4%BA%AC+%E5%87%A4%E5%87%B0+%E6%8E%A2%E7%B4%A2+%E6%98%9F%E7%A9%BA%E5%8D%AB%E8%A7%86-%E5%8C%97%E4%BA%AC%E9%82%AE%E7%94%B5%E5%A4%A7%E5%AD%A6%E6%A0%A1%E5%9B%AD%E7%BD%91.m3u
 https://raw.githubusercontent.com/imDazui/Tvlist-awesome-m3u-m3u8/master/m3u/%E5%AE%89%E5%BE%BD%E5%86%9C%E5%A4%A7.m3u
-https://raw.githubusercontent.com/imDazui/Tvlist-awesome-m3u-m3u8/master/m3u/%E5%A4%A9%E9%80%94%E4%BA%91.m3u
 https://raw.githubusercontent.com/imDazui/Tvlist-awesome-m3u-m3u8/master/m3u/%E5%B9%B3%E9%A1%B6%E5%B1%B1%E5%AD%A6%E9%99%A2%E6%95%99%E8%82%B2%E7%BD%91IPTV.m3u
 https://raw.githubusercontent.com/imDazui/Tvlist-awesome-m3u-m3u8/master/m3u/%E8%85%BE%E8%AE%AF%E4%BA%91.m3u
+
+https://raw.githubusercontent.com/imDazui/Tvlist-awesome-m3u-m3u8/master/m3u/%E5%A4%A9%E9%80%94%E4%BA%91.m3u
 https://raw.githubusercontent.com/imDazui/Tvlist-awesome-m3u-m3u8/master/m3u/%E5%9B%BD%E5%86%85%E5%9C%B0%E6%96%B9%E5%8F%B0202005.m3u
-
-# https://raw.githubusercontent.com/vbskycn/iptv/master/tv/iptv6.txt
-# https://live.hacks.tools/tv/iptv6.txt
-
 [WHITELIST]
 # 以下是订阅源的白名单，白名单内的订阅源获取的接口将不会参与测速，始终保留至结果最前。
 # This is the whitelist for subscription sources. Subscription sources in the whitelist will not participate in speed testing and will always be retained at the front of the results.
