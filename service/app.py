@@ -1,27 +1,40 @@
+import logging
 import os
 import sys
 import time
 
 sys.path.append(os.path.dirname(sys.path[0]))
 from flask import Flask, send_from_directory, make_response, request, jsonify, Response
-from utils.tools import get_result_file_content, resource_path, get_public_url
+from utils.tools import get_result_file_content, resource_path, get_public_url, merge_txt_multi_source
 from utils.config import config
 import utils.constants as constants
 import atexit
 from service.rtmp import start_rtmp_service, stop_rtmp_service, app_rtmp_url, hls_temp_path, STREAMS_LOCK, \
     hls_running_streams, start_hls_to_rtmp, hls_last_access, HLS_WAIT_TIMEOUT, HLS_WAIT_INTERVAL
-import logging
 from utils.i18n import t
 from werkzeug.utils import secure_filename
 import mimetypes
+from utils.requests.tools import get_redirect_chain_content
+from service.proxy import get_ad_filter, filter_playlist, rewrite_list_to_proxy
+from utils.processing_status import status, read_status_file
 
 app = Flask(__name__)
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
 
+_service_logger = logging.getLogger("service")
+
+
+def _log_request():
+    if _service_logger.isEnabledFor(logging.DEBUG):
+        _service_logger.debug(
+            "%s %s", request.method, request.full_path,
+        )
+
 
 @app.route("/")
 def show_index():
+    _log_request()
     return get_result_file_content(
         path=config.final_file,
         file_type="m3u" if config.open_m3u_result else "txt"
@@ -59,9 +72,22 @@ def show_logo(filename):
     return send_from_directory(logo_dir, safe_name, mimetype=mime_type or 'application/octet-stream')
 
 
+@app.route("/m3u")
+def show_m3u():
+    _log_request()
+    return get_result_file_content(path=config.final_file, file_type="m3u")
+
+
 @app.route("/txt")
 def show_txt():
+    _log_request()
     return get_result_file_content(path=config.final_file, file_type="txt")
+
+
+@app.route("/txt/multi")
+def show_txt_multi():
+    _log_request()
+    return get_result_file_content(path=config.final_file, file_type="txt", merge_source=True)
 
 
 @app.route("/ipv4/txt")
@@ -69,9 +95,19 @@ def show_ipv4_txt():
     return get_result_file_content(path=constants.ipv4_result_path, file_type="txt")
 
 
+@app.route("/ipv4/txt/multi")
+def show_ipv4_txt_multi():
+    return get_result_file_content(path=constants.ipv4_result_path, file_type="txt", merge_source=True)
+
+
 @app.route("/ipv6/txt")
 def show_ipv6_txt():
     return get_result_file_content(path=constants.ipv6_result_path, file_type="txt")
+
+
+@app.route("/ipv6/txt/multi")
+def show_ipv6_txt_multi():
+    return get_result_file_content(path=constants.ipv6_result_path, file_type="txt", merge_source=True)
 
 
 @app.route("/hls")
@@ -85,9 +121,19 @@ def show_hls_txt():
     return get_result_file_content(path=constants.hls_result_path, file_type="txt")
 
 
+@app.route("/hls/txt/multi")
+def show_hls_txt_multi():
+    return get_result_file_content(path=constants.hls_result_path, file_type="txt", merge_source=True)
+
+
 @app.route("/hls/ipv4/txt")
 def show_hls_ipv4_txt():
     return get_result_file_content(path=constants.hls_ipv4_result_path, file_type="txt")
+
+
+@app.route("/hls/ipv4/txt/multi")
+def show_hls_ipv4_txt_multi():
+    return get_result_file_content(path=constants.hls_ipv4_result_path, file_type="txt", merge_source=True)
 
 
 @app.route("/hls/ipv6/txt")
@@ -95,9 +141,9 @@ def show_hls_ipv6_txt():
     return get_result_file_content(path=constants.hls_ipv6_result_path, file_type="txt")
 
 
-@app.route("/m3u")
-def show_m3u():
-    return get_result_file_content(path=config.final_file, file_type="m3u")
+@app.route("/hls/ipv6/txt/multi")
+def show_hls_ipv6_txt_multi():
+    return get_result_file_content(path=constants.hls_ipv6_result_path, file_type="txt", merge_source=True)
 
 
 @app.route("/hls/m3u")
@@ -112,6 +158,7 @@ def show_ipv4_m3u():
 
 @app.route("/ipv4")
 def show_ipv4_result():
+    _log_request()
     return get_result_file_content(
         path=constants.ipv4_result_path,
         file_type="m3u" if config.open_m3u_result else "txt"
@@ -120,6 +167,7 @@ def show_ipv4_result():
 
 @app.route("/hls/ipv4")
 def show_hls_ipv4():
+    _log_request()
     return get_result_file_content(
         path=constants.hls_ipv4_result_path,
         file_type="m3u" if config.open_m3u_result else "txt"
@@ -128,11 +176,13 @@ def show_hls_ipv4():
 
 @app.route("/ipv6/m3u")
 def show_ipv6_m3u():
+    _log_request()
     return get_result_file_content(path=constants.ipv6_result_path, file_type="m3u")
 
 
 @app.route("/ipv6")
 def show_ipv6_result():
+    _log_request()
     return get_result_file_content(
         path=constants.ipv6_result_path,
         file_type="m3u" if config.open_m3u_result else "txt"
@@ -141,6 +191,7 @@ def show_ipv6_result():
 
 @app.route("/hls/ipv6")
 def show_hls_ipv6():
+    _log_request()
     return get_result_file_content(
         path=constants.hls_ipv6_result_path,
         file_type="m3u" if config.open_m3u_result else "txt"
@@ -224,6 +275,15 @@ def show_unmatch_log():
     return response
 
 
+@app.route("/update-status")
+def show_status():
+    _log_request()
+    # Read from the cross-process file so we see the real pipeline state.
+    # Fall back to the in-process singleton (which is always idle here).
+    st = read_status_file() or status.get()
+    return jsonify(st)
+
+
 @app.route('/hls_proxy/<channel_id>', methods=['GET'])
 def hls_proxy(channel_id):
     if not channel_id:
@@ -243,7 +303,7 @@ def hls_proxy(channel_id):
     if need_start:
         host = f"{app_rtmp_url}/hls"
         client_ua = request.headers.get('User-Agent') if request and hasattr(request, 'headers') else None
-        print(f"▶️ {client_ua}")
+        _service_logger.debug("HLS proxy start: channel=%s ua=%s", channel_id, client_ua)
         start_hls_to_rtmp(host, channel_id, client_user_agent=client_ua)
 
     hls_min_segments = 3
@@ -258,7 +318,7 @@ def hls_proxy(channel_id):
                 if segment_count >= hls_min_segments and not ends_with_discont:
                     break
             except Exception as e:
-                print(t("msg.error_channel_id_m3u8_read_info").format(channel_id=channel_id, info=e))
+                _service_logger.error(t("msg.error_channel_id_m3u8_read_info").format(channel_id=channel_id, info=e))
         time.sleep(HLS_WAIT_INTERVAL)
         waited += HLS_WAIT_INTERVAL
 
@@ -269,7 +329,7 @@ def hls_proxy(channel_id):
         with open(m3u8_path, 'rb') as f:
             data = f.read()
     except Exception as e:
-        print(t("msg.error_channel_id_m3u8_read_info").format(channel_id=channel_id, info=e))
+        _service_logger.error(t("msg.error_channel_id_m3u8_read_info").format(channel_id=channel_id, info=e))
         return jsonify({t("name.error"): t("msg.error_m3u8_read")}), 500
 
     now = time.time()
@@ -279,19 +339,142 @@ def hls_proxy(channel_id):
     return Response(data, mimetype='application/vnd.apple.mpegurl')
 
 
+@app.route("/proxy")
+def proxy_playlist():
+    """
+    GET /proxy?url=<urlencoded upstream HLS playlist URL>
+
+    Fetches the upstream playlist (small text only), drops ad segments by
+    URL match (plus cue/discontinuity markers), rewrites nested playlist URIs
+    back through /proxy and segment URIs to absolute CDN URLs, and returns the
+    clean playlist. Media bytes are fetched by the player straight from the CDN
+    and never transit this server.
+
+    Config:
+      open_proxy — if False, returns 404.
+    """
+    if not config.open_proxy:
+        return jsonify({"error": "proxy disabled"}), 404
+
+    url = request.args.get("url", "").strip()
+    if not url:
+        return jsonify({"error": "url parameter required"}), 400
+
+    chain, content = get_redirect_chain_content(url)
+    if not content or not content.strip():
+        return jsonify({"error": "upstream fetch failed or returned empty content"}), 502
+
+    # Resolved base URL for relative-URI resolution is the final redirect target.
+    base_url = chain[-1] if chain else url
+
+    # proxy_base from request.path so the rewritten links use the same host the
+    # client used (works transparently behind nginx / any path prefix).
+    proxy_base = request.path  # e.g. "/proxy"
+
+    text, _kind = filter_playlist(content, base_url, proxy_base, get_ad_filter())
+    return Response(text, content_type="application/vnd.apple.mpegurl; charset=utf-8")
+
+
+def _read_result_file(path):
+    """Read a result file as text, returning None if the file does not exist."""
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as fh:
+            return fh.read()
+    return None
+
+
+def _serve_proxied_list(file_type, merge_source=False, mimetype="text/plain"):
+    """
+    Shared helper for the three proxied-list endpoints.
+
+    Reads the result file for *file_type* (derived from config.final_file),
+    optionally runs merge_txt_multi_source on txt content, rewrites every
+    station URL through the /proxy ad-filter endpoint, and returns a Response.
+
+    Returns 404 JSON when open_proxy is disabled, or the waiting_tip plain-text
+    when the result file has not yet been generated.
+    """
+    if not config.open_proxy:
+        return jsonify({"error": "proxy disabled"}), 404
+
+    base_path = os.path.splitext(config.final_file)[0]
+    file_path = base_path + "." + file_type
+
+    content = _read_result_file(file_path)
+    if content is None:
+        return Response(constants.waiting_tip, mimetype="text/plain")
+
+    if merge_source:
+        content = merge_txt_multi_source(content)
+
+    # Root-relative proxy base: the player resolves "/proxy?url=..." against the URL it
+    # fetched this list from, so it uses the exact scheme/host/port the client used.
+    # Avoids emitting an internal host/port (e.g. gunicorn's 127.0.0.1:5180) that
+    # request.host_url would report when running behind nginx / port-forwarding.
+    proxy_base = "/proxy"
+    rewritten = rewrite_list_to_proxy(content, file_type, proxy_base)
+    # Declare charset explicitly: the m3u mimetype (application/vnd.apple.mpegurl)
+    # is not text/* so werkzeug won't auto-append charset=utf-8, and the list
+    # contains non-ASCII channel names/emoji that otherwise render as mojibake.
+    return Response(rewritten, content_type=f"{mimetype}; charset=utf-8")
+
+
+@app.route("/proxy/m3u")
+def proxy_m3u():
+    """
+    GET /proxy/m3u
+
+    Serve the result m3u playlist with every station URL rewritten to point
+    through the /proxy ad-filter endpoint.  Requires open_proxy to be True.
+    """
+    return _serve_proxied_list(
+        file_type="m3u",
+        mimetype="application/vnd.apple.mpegurl",
+    )
+
+
+@app.route("/proxy/txt")
+def proxy_txt():
+    """
+    GET /proxy/txt
+
+    Serve the result txt playlist with every station URL rewritten to point
+    through the /proxy ad-filter endpoint.  Requires open_proxy to be True.
+    """
+    return _serve_proxied_list(file_type="txt", mimetype="text/plain")
+
+
+@app.route("/proxy/txt/multi")
+def proxy_txt_multi():
+    """
+    GET /proxy/txt/multi
+
+    Like /proxy/txt but first collapses same-station lines into a single
+    '#'-joined multi-source line (merge_txt_multi_source), then rewrites all
+    URLs through /proxy.  Requires open_proxy to be True.
+    """
+    return _serve_proxied_list(
+        file_type="txt",
+        merge_source=True,
+        mimetype="text/plain",
+    )
+
+
 @app.post('/on_done')
 def on_done():
     form = request.form
     channel_id = form.get('name', '')
 
-    print(t("msg.rtmp_on_done").format(channel_id=channel_id))
+    _service_logger.info(t("msg.rtmp_on_done").format(channel_id=channel_id))
     return ''
 
 
 def run_service():
     try:
         if not os.getenv("GITHUB_ACTIONS"):
+            _service_logger.info("Starting web service on 0.0.0.0:%s", config.app_port)
             if config.open_rtmp and sys.platform == "win32":
+                _service_logger.info("Starting RTMP service (Windows)")
                 start_rtmp_service()
             public_url = get_public_url()
             mode = [t("name.direct_connection")]
@@ -299,12 +482,12 @@ def run_service():
                 mode.append(t("name.push_streaming"))
             for m in mode:
                 if m == t("name.push_streaming"):
-                    print(t("msg.rtmp_full_api").format(mode=m, api=f"{public_url}/hls"))
+                    _service_logger.info(t("msg.rtmp_full_api").format(mode=m, api=f"{public_url}/hls"))
                 else:
-                    print(t("msg.full_api").format(mode=m, api=public_url))
+                    _service_logger.info(t("msg.full_api").format(mode=m, api=public_url))
             app.run(host="0.0.0.0", port=config.app_port)
     except Exception as e:
-        print(t("msg.error_service_start_failed").format(info=e))
+        _service_logger.error(t("msg.error_service_start_failed").format(info=e))
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 import asyncio
+import os
 import http.cookies
 import re
 from collections import deque
@@ -15,6 +16,7 @@ from utils.config import config
 from utils.ffmpeg import probe_url, ffmpeg_url
 from utils.i18n import t
 from utils.requests.tools import headers as request_headers
+from utils.scoring import compute_score, is_sustainable
 from utils.tools import get_resolution_value
 from utils.types import TestResult, ChannelTestResult, TestResultCacheData
 
@@ -35,6 +37,19 @@ open_filter_speed = config.open_filter_speed
 min_speed_value = config.min_speed
 resolution_speed_map = config.resolution_speed_map
 open_filter_ad = config.open_filter_ad
+speed_test_limit = config.speed_test_limit
+ranking_weights = config.ranking_weights
+
+
+def _full_probe_enabled() -> bool:
+    """
+    Whether to run ffprobe on every candidate to enrich quality signals.
+    Evaluated per call (not at import) so scheduler runs pick up the history
+    cache written by a previous run. Honors open_history; force via open_full_probe.
+    """
+    if config.open_full_probe:
+        return True
+    return config.open_history and os.path.exists(constants.cache_path)
 m3u8_headers = ['application/x-mpegurl', 'application/vnd.apple.mpegurl', 'audio/mpegurl', 'audio/x-mpegurl']
 default_ipv6_delay = 0.1
 default_ipv6_resolution = "1920x1080"
@@ -263,6 +278,7 @@ async def get_result(url: str, headers: dict = None, resolution: str = None,
     info = {'speed': 0.0, 'delay': -1, 'resolution': resolution}
     location = None
     segment_urls = []
+    dur_by_url: dict[str, float] = {}
     try:
         url = quote(url, safe=':/?$&=@[]%').partition('$')[0]
         async with _session(session) as active_session:
@@ -310,11 +326,19 @@ async def get_result(url: str, headers: dict = None, resolution: str = None,
                             media_playlist = m3u8.loads(playlist_content)
                             if open_filter_ad and is_ad_playlist(media_playlist, playlist_url):
                                 raise Exception("Ad source filtered")
-                            segment_urls = [urljoin(playlist_url, segment.uri) for segment in media_playlist.segments]
+                            for segment in media_playlist.segments:
+                                seg_url = urljoin(playlist_url, segment.uri)
+                                segment_urls.append(seg_url)
+                                if segment.duration:
+                                    dur_by_url[seg_url] = segment.duration
                     else:
                         if open_filter_ad and is_ad_playlist(m3u8_obj, url):
                             raise Exception("Ad source filtered")
-                        segment_urls = [urljoin(url, segment.uri) for segment in segments]
+                        for segment in segments:
+                            seg_url = urljoin(url, segment.uri)
+                            segment_urls.append(seg_url)
+                            if segment.duration:
+                                dur_by_url[seg_url] = segment.duration
                     if not segment_urls:
                         raise Exception("Segment urls not found")
                 else:
@@ -346,6 +370,36 @@ async def get_result(url: str, headers: dict = None, resolution: str = None,
                     info['speed'] = total_size / total_time / 1024 / 1024 if total_time > 0 else 0
                     delays = [result['delay'] for result in valid_results if result.get('delay', -1) >= 0]
                     info['delay'] = int(sum(delays) / len(delays)) if delays else -1
+                    # Encoded bitrate from downloaded segment bytes vs their playback duration
+                    seg_bytes = 0
+                    seg_duration = 0.0
+                    for ts_url, seg_res in zip(sampled_segment_urls, results):
+                        if isinstance(seg_res, dict) and seg_res.get('size'):
+                            seg_bytes += seg_res['size']
+                            seg_dur = dur_by_url.get(ts_url)
+                            if seg_dur:
+                                seg_duration += seg_dur
+                    if seg_bytes > 0 and seg_duration > 0:
+                        info['bitrate'] = seg_bytes * 8 / seg_duration
+                # ffmpeg fallback when the segment download reported no speed
+                if round(info.get('speed') or 0, 2) == 0 and info.get('delay') != -1:
+                    try:
+                        ff_out = await ffmpeg_url(url, headers, timeout)
+                        if ff_out:
+                            parsed = get_video_info(ff_out)
+                            if parsed:
+                                if parsed.get('speed'):
+                                    info['speed'] = parsed['speed']
+                                if parsed.get('resolution'):
+                                    info['resolution'] = parsed['resolution']
+                                if parsed.get('fps'):
+                                    info['fps'] = parsed['fps']
+                                if parsed.get('video_codec'):
+                                    info['video_codec'] = parsed['video_codec']
+                                if parsed.get('audio_codec'):
+                                    info['audio_codec'] = parsed['audio_codec']
+                    except Exception:
+                        pass
     except:
         pass
     finally:
@@ -354,20 +408,32 @@ async def get_result(url: str, headers: dict = None, resolution: str = None,
             default=min_speed_value,
         )
         should_probe = open_supply or not open_filter_speed or (info.get('speed') or 0) >= probe_speed_threshold
-        if (filter_resolution and should_probe and not location
-                and not info.get('resolution') and info.get('delay') != -1):
+        full_probe = _full_probe_enabled()
+        need_probe = (
+            not location and info.get('delay') != -1 and (
+                (filter_resolution and should_probe and not info.get('resolution'))
+                or (full_probe and (not info.get('fps') or not info.get('video_codec')
+                                    or not info.get('bitrate')))
+            )
+        )
+        if need_probe:
             try:
                 async with _limit(probe_semaphore):
                     probed = await probe_url(url, headers, timeout=timeout)
                 if probed:
-                    info['resolution'] = probed.get('resolution')
-                    info['fps'] = probed.get('fps')
-                    info['video_codec'] = probed.get('video_codec')
-                    info['audio_codec'] = probed.get('audio_codec')
+                    if not info.get('resolution'):
+                        info['resolution'] = probed.get('resolution')
+                    if not info.get('fps'):
+                        info['fps'] = probed.get('fps')
+                    if not info.get('video_codec'):
+                        info['video_codec'] = probed.get('video_codec')
+                    if not info.get('audio_codec'):
+                        info['audio_codec'] = probed.get('audio_codec')
+                    if not info.get('bitrate') and probed.get('bitrate'):
+                        info['bitrate'] = probed.get('bitrate')
             except Exception:
                 pass
     return info
-
 
 async def get_delay_requests(url, timeout=speed_test_timeout, proxy=None):
     """
@@ -539,16 +605,27 @@ def sample_segment_urls(segment_urls: list, limit: int) -> list:
 def get_avg_result(result) -> TestResult:
     delays = [item.get('delay') for item in result if isinstance(item.get('delay'), (int, float)) and item['delay'] >= 0]
     resolutions = [item.get('resolution') for item in result if item.get('resolution')]
-    best = max(result, key=lambda item: item.get('speed') or 0)
-    averaged = {
+    bitrates = [item.get('bitrate') for item in result if item.get('bitrate')]
+    fps_values = []
+    for item in result:
+        fv = item.get('fps')
+        if fv is None:
+            continue
+        try:
+            fps_values.append(float(fv))
+        except (TypeError, ValueError):
+            continue
+    video_codec = next((item.get('video_codec') for item in result if item.get('video_codec')), None)
+    audio_codec = next((item.get('audio_codec') for item in result if item.get('audio_codec')), None)
+    return {
         'speed': sum(item.get('speed') or 0 for item in result) / len(result),
         'delay': int(sum(delays) / len(delays)) if delays else -1,
         'resolution': max(resolutions, key=get_resolution_value) if resolutions else None,
+        'bitrate': (sum(bitrates) / len(bitrates)) if bitrates else None,
+        'fps': max(fps_values) if fps_values else None,
+        'video_codec': video_codec,
+        'audio_codec': audio_codec,
     }
-    for key in ('fps', 'video_codec', 'audio_codec'):
-        if best.get(key) is not None:
-            averaged[key] = best[key]
-    return averaged
 
 
 def get_speed_result(key: str) -> TestResult:
@@ -568,15 +645,15 @@ async def get_speed(data, headers=None, ipv6_proxy=None, filter_resolution=open_
     Get the speed (response time and resolution) of the url
     """
     url = data['url']
-    resolution = data['resolution']
+    resolution = data.get('resolution')
     result: TestResult = {'speed': 0, 'delay': -1, 'resolution': resolution}
     headers = {**request_headers, **(headers or {})}
     try:
-        cache_key = data['host'] if speed_test_filter_host else url
+        cache_key = data.get('host') if speed_test_filter_host else url
         if cache_key and cache_key in cache:
             result = get_avg_result(cache[cache_key])
         else:
-            if data['ipv_type'] == "ipv6" and ipv6_proxy:
+            if data.get('ipv_type') == "ipv6" and ipv6_proxy:
                 result.update(default_ipv6_result)
             elif constants.rt_url_pattern.match(url) is not None:
                 async with _limit(probe_semaphore):
@@ -636,7 +713,7 @@ def get_sort_result(
     """
     total_result = []
     for result in results:
-        if not ipv6_support and result["ipv_type"] == "ipv6":
+        if not ipv6_support and result.get("ipv_type") == "ipv6":
             result.update(default_ipv6_result)
         result_speed, result_delay, resolution = (
             result.get("speed") or 0,
@@ -652,21 +729,13 @@ def get_sort_result(
                 resolution_value = get_resolution_value(resolution)
                 if resolution_value < min_resolution or resolution_value > max_resolution:
                     continue
+            if not is_sustainable(result, ranking_weights):
+                continue
         total_result.append(result)
-
-    def sort_key(item):
-        keys = []
-        for dim in sort_by:
-            if dim == "speed":
-                keys.append(-(item.get("speed") or 0))
-            elif dim == "delay":
-                delay = item.get("delay")
-                keys.append(delay if isinstance(delay, (int, float)) and delay >= 0 else float("inf"))
-            elif dim == "resolution":
-                keys.append(-(get_resolution_value(item.get("resolution") or "") or 0))
-        return tuple(keys)
-
-    total_result.sort(key=sort_key)
+    total_result.sort(
+        key=lambda item: (compute_score(item, ranking_weights), item.get("speed") or 0),
+        reverse=True,
+    )
     return total_result
 
 

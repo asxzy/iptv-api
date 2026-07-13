@@ -1,0 +1,128 @@
+📺央视频道,#genre#
+CCTV-1
+CCTV-2
+CCTV-3
+CCTV-4
+CCTV-5
+CCTV-5+
+CCTV-6
+CCTV-7
+CCTV-8
+CCTV-9
+CCTV-10
+CCTV-11
+CCTV-12
+CCTV-13
+CCTV-14
+CCTV-15
+CCTV-16
+CCTV-17
+CETV-1
+CETV-2
+CETV-3
+CETV-4
+
+📡陕西,#genre#
+西安新闻综合
+西新闻资讯
+陕西都市青春
+西安新闻综合
+陕西体育休闲
+陕西公共
+西安都市
+西安商务资讯
+西安影视
+西安丝路
+
+📡卫视频道,#genre#
+广东卫视
+香港卫视
+浙江卫视
+湖南卫视
+北京卫视
+湖北卫视
+黑龙江卫视
+安徽卫视
+重庆卫视
+东方卫视
+东南卫视
+甘肃卫视
+广西卫视
+贵州卫视
+海南卫视
+河北卫视
+河南卫视
+吉林卫视
+江苏卫视
+江西卫视
+辽宁卫视
+内蒙古卫视
+宁夏卫视
+青海卫视
+山东卫视
+山西卫视
+陕西卫视
+四川卫视
+深圳卫视
+三沙卫视
+天津卫视
+西藏卫视
+新疆卫视
+云南卫视
+
+🎞️影视剧场,#genre#
+CHC家庭影院
+CHC动作电影
+CHC影迷电影
+CHC高清电影
+
+🧒少儿·动漫,#genre#
+CN卡通
+i-Fun动漫
+MOMO亲子
+
+⚽体育,#genre#
+SPOTV
+SPOTV2
+
+🌏港澳台,#genre#
+J2
+TVB星河
+TVB千禧经典
+ViuTV
+HOY TV
+HOY资讯
+
+🌐国际频道,#genre#
+CGTN
+HBO
+CINEMAX
+CNN
+BBC
+AXN
+Animax
+Nickelodeon
+Nick Jr.
+Cartoon Network
+Discovery
+Discovery Asia
+Love Nature
+BBC Earth
+tvN
+KIX
+HITS
+Celestial Movies
+DW
+France 24
+Al Jazeera
+CNBC
+CNA
+Arirang
+Sky News
+ESPN
+NBA TV
+EUROSPORT
+Golf Channel
+Fight Sports
+Astro AEC
+Astro AOD

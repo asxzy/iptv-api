@@ -1,0 +1,2 @@
+# Dev subscribe source only
+http://192.168.1.198:8888/m3u

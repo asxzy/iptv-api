@@ -4,6 +4,7 @@ import subprocess
 from time import time
 
 from utils.i18n import t
+from .limits import INPUT_BOUND_ARGS, get_ffmpeg_semaphore
 
 min_measure_time = 1.0
 stability_window = 4
@@ -38,7 +39,7 @@ async def ffmpeg_url(url, headers=None, timeout=10):
     """
     headers_str = "".join(f"{k}: {v}\r\n" for k, v in (headers or {}).items())
 
-    args = ["ffmpeg", "-nostdin", "-threads", "1", "-t", str(timeout)]
+    args = ["ffmpeg", "-nostdin", "-threads", "1", "-t", str(timeout), *INPUT_BOUND_ARGS]
     if headers_str:
         args += ["-headers", headers_str]
     args += ["-http_persistent", "0", "-stats", "-i", url, "-f", "null", "-"]
@@ -49,6 +50,8 @@ async def ffmpeg_url(url, headers=None, timeout=10):
     bitrate_re = re.compile(r"bitrate=\s*([0-9\.]+)\s*k?bits/s", re.IGNORECASE)
     start = time()
 
+    semaphore = get_ffmpeg_semaphore()
+    await semaphore.acquire()
     try:
         proc = await asyncio.create_subprocess_exec(*args, stdout=asyncio.subprocess.PIPE,
                                                     stderr=asyncio.subprocess.PIPE)
@@ -149,6 +152,7 @@ async def ffmpeg_url(url, headers=None, timeout=10):
                 await proc.wait()
             except Exception:
                 pass
+        semaphore.release()
     stderr_bytes = b"".join(stderr_parts)
     try:
         return stderr_bytes.decode(errors="ignore")

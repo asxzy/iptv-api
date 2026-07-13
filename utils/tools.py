@@ -32,10 +32,24 @@ opencc_t2s = OpenCC("t2s")
 _channel_alias_instance = None
 
 
-def get_logger(path, level=logging.ERROR, init=False):
+_LOG_FORMAT = "%(asctime)s [%(levelname)s] [%(name)s] %(message)s"
+_LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+
+def get_logger(path, level=None, init=False):
     """
     get the logger
+
+    Controls console verbosity via config.log_level while keeping file logging
+    at the specified level. If level is None, file handler defaults to INFO.
+    Console handler always uses config.log_level for filtering.
     """
+    if level is None:
+        level = logging.INFO
+
+    console_level = config.log_level
+    effective_level = min(level, console_level)
+
     dir_name = os.path.dirname(path) or "."
     os.makedirs(dir_name, exist_ok=True)
     os.makedirs(constants.output_dir, exist_ok=True)
@@ -66,6 +80,8 @@ def get_logger(path, level=logging.ERROR, init=False):
         encoding="utf-8",
         delay=True,
     )
+    handler.setLevel(level)
+    handler.setFormatter(logging.Formatter(_LOG_FORMAT, datefmt=_LOG_DATE_FORMAT))
 
     abs_path = os.path.abspath(path)
     if not any(
@@ -78,13 +94,40 @@ def get_logger(path, level=logging.ERROR, init=False):
     if not has_stream:
         try:
             stream_handler = logging.StreamHandler(sys.stdout)
-            stream_handler.setLevel(level)
+            stream_handler.setLevel(console_level)
+            if console_level <= logging.INFO:
+                stream_handler.setFormatter(logging.Formatter(
+                    _LOG_FORMAT, datefmt=_LOG_DATE_FORMAT,
+                ))
             logger.addHandler(stream_handler)
         except Exception:
             pass
 
-    logger.setLevel(level)
+    logger.setLevel(effective_level)
+
+    if init and not logging.getLogger().hasHandlers():
+        try:
+            _root = logging.getLogger()
+            _root.setLevel(effective_level)
+            _root_handler = logging.StreamHandler(sys.stdout)
+            _root_handler.setLevel(console_level)
+            if console_level <= logging.INFO:
+                _root_handler.setFormatter(logging.Formatter(
+                    _LOG_FORMAT, datefmt=_LOG_DATE_FORMAT,
+                ))
+            _root.addHandler(_root_handler)
+        except Exception:
+            pass
+
+        # Suppress noisy third-party loggers that flood DEBUG-level output
+        for _noisy in ("urllib3", "urllib3.connectionpool",
+                       "chardet", "charset_normalizer"):
+            logging.getLogger(_noisy).setLevel(logging.WARNING)
+
     return logger
+
+
+_tools_logger = get_logger(constants.log_path)
 
 
 def format_interval(t):
@@ -123,7 +166,7 @@ def get_pbar_remaining(n=0, total=0, start_time=None):
             remaining_time = "未知"
         return remaining_time
     except Exception as e:
-        print(f"Error: {e}")
+        _tools_logger.error("Error calculating remaining time: %s", e)
 
 
 def update_file(final_file, old_file, copy=False):
@@ -220,11 +263,11 @@ def get_total_urls(
     total_urls = []
     for info in info_list:
         channel_id, url, origin, resolution, url_ipv_type, extra_info = (
-            info["id"],
+            info.get("id", hash(info.get("url", ""))),
             info["url"],
             info["origin"],
-            info["resolution"],
-            info["ipv_type"],
+            info.get("resolution"),
+            info.get("ipv_type"),
             info.get("extra_info", ""),
         )
         if not origin:
@@ -252,8 +295,9 @@ def get_total_urls(
 
         categorized_urls = supply_urls if info.get("supply") else primary_urls
         if ipv_prefer_bool:
-            if url_ipv_type in ipv_type_prefer:
-                categorized_urls[origin][url_ipv_type].append(info)
+            ipv = url_ipv_type or "ipv4"
+            if ipv in ipv_type_prefer:
+                categorized_urls[origin][ipv].append(info)
         else:
             categorized_urls[origin]["all"].append(info)
 
@@ -303,14 +347,14 @@ def check_ipv6_support():
         return False
     url = "https://ipv6.tokyo.test-ipv6.com/ip/?callback=?&testdomain=test-ipv6.com&testname=test_aaaa"
     try:
-        print(t("msg.check_ipv6_support"))
+        _tools_logger.info(t("msg.check_ipv6_support"))
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
-            print(t("msg.ipv6_supported"))
+            _tools_logger.info(t("msg.ipv6_supported"))
             return True
     except Exception:
         pass
-    print(t("msg.ipv6_not_supported"))
+    _tools_logger.info(t("msg.ipv6_not_supported"))
     return False
 
 
@@ -525,15 +569,66 @@ def convert_to_m3u(path=None, first_channel_name=None, data=None, content=None):
             os.replace(tmp_path, m3u_file_path)
 
 
-def get_result_file_content(path=None, show_content=False, file_type=None):
+def merge_txt_multi_source(content):
     """
-    Get the content of the result file
+    Collapse a result txt so each station occupies a single line whose sources are joined
+    by '#' (URL1#URL2#URL3), for players that accept multiple sources per channel.
+
+    The writer emits a station's sources as consecutive `name,url` lines, so consecutive
+    lines sharing the same name are merged. Category markers (`分类,#genre#`), blank lines
+    and malformed (comma-less) lines pass through untouched and break a run. Only the first
+    comma splits name/url, so any `$extra_info` suffix on the url is preserved.
     """
+    out = []
+    cur_name = None
+    cur_urls = []
+
+    def flush():
+        if cur_name is not None:
+            out.append(f"{cur_name},{'#'.join(cur_urls)}")
+
+    for raw in content.split("\n"):
+        line = raw.rstrip("\r")
+        stripped = line.strip()
+        if not stripped or stripped.endswith(",#genre#") or "," not in line:
+            flush()
+            cur_name, cur_urls = None, []
+            out.append(line)
+            continue
+        name, url = line.split(",", 1)
+        if name == cur_name:
+            cur_urls.append(url)
+        else:
+            flush()
+            cur_name, cur_urls = name, [url]
+    flush()
+    return "\n".join(out)
+
+
+def get_result_file_content(path=None, show_content=False, file_type=None, merge_source=False):
+    """
+    Get the content of the result file. When merge_source is True, the txt is collapsed so
+    each station has a single '#'-joined multi-source line (see merge_txt_multi_source).
+    """
+    if merge_source:
+        file_type = "txt"
     result_file = (
         os.path.splitext(path)[0] + f".{file_type}"
         if file_type
         else path
     )
+    try:
+        from utils.result_store import result_store as _rs
+        cached = _rs.get(result_file)
+        if cached is not None:
+            content = cached
+            if merge_source:
+                content = merge_txt_multi_source(content)
+            response = make_response(content)
+            response.mimetype = 'text/plain'
+            return response
+    except Exception:
+        pass
     if os.path.exists(result_file):
         if config.open_m3u_result:
             if file_type == "m3u" or not file_type:
@@ -542,8 +637,34 @@ def get_result_file_content(path=None, show_content=False, file_type=None):
                 return send_file(resource_path(result_file), as_attachment=True)
         with open(result_file, "r", encoding="utf-8") as file:
             content = file.read()
+        if merge_source:
+            content = merge_txt_multi_source(content)
     else:
-        content = constants.waiting_tip
+        try:
+            from utils.processing_status import read_status_file
+            from utils.i18n import t as _t
+            _st = read_status_file() or {"is_processing": False}
+            if _st.get("is_processing"):
+                _line_parts = []
+                _phase_label = _t(
+                    f"progress.{_st['phase']}",
+                    default=_st["phase"],
+                )
+                _pct = _st.get("progress", 0)
+                _tested = _st.get("tested_urls", 0)
+                _total_urls = _st.get("total_urls", 0)
+                _url = _st.get("current_url", "")
+                _name = _st.get("current_name", "")
+                _line_parts.append(f"⏳{_phase_label} {_pct}%")
+                if _total_urls:
+                    _line_parts.append(f"({_tested}/{_total_urls})")
+                if _name:
+                    _line_parts.append(f"| {_name}")
+                content = f"{_t('content.update_running')},#genre#\n{' '.join(_line_parts)},{_url}\n"
+            else:
+                content = constants.waiting_tip
+        except Exception:
+            content = constants.waiting_tip
     response = make_response(content)
     response.mimetype = 'text/plain'
     return response
@@ -813,11 +934,20 @@ def get_real_path(path) -> str:
     return real_path
 
 
+def resolve_config_path(path: str) -> str:
+    """
+    Resolve a logical config path to the file actually read: apply resource_path
+    bundling then the user_ override. Single resolver so every reader (and any
+    file-change watcher) agrees on which file backs a config name.
+    """
+    return get_real_path(resource_path(path))
+
+
 def get_urls_from_file(path: str, pattern_search: bool = True) -> list:
     """
     Get the urls from file
     """
-    real_path = get_real_path(resource_path(path))
+    real_path = resolve_config_path(path)
     urls = []
     if os.path.exists(real_path):
         with open(real_path, "r", encoding="utf-8") as f:
@@ -1247,7 +1377,7 @@ def save_url_content(category: str, url: str, content: str) -> None:
             else:
                 f.write(str(content))
     except Exception as e:
-        print(f"Failed to save content for {url} into {category}: {e}")
+        _tools_logger.error("Failed to save content for %s into %s: %s", url, category, e)
 
 
 def get_subscribe_entries(path: str = "config/subscribe.txt") -> tuple[list, list]:
@@ -1448,7 +1578,7 @@ def disable_urls_in_file(path: str, urls: Iterable[str]) -> dict[str, int]:
 
         return {"disabled": disabled_count, "active": active_count}
     except Exception as e:
-        print(f"Failed to auto-disable urls in {real_path}: {e}")
+        _tools_logger.error("Failed to auto-disable urls in %s: %s", real_path, e)
         return {"disabled": 0, "active": 0}
 
 

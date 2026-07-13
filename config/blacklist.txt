@@ -2,3 +2,12 @@
 # This is the interface blacklist list, the interface matching the keyword will be blocked, one keyword line
 /audio/
 bxtv.3a.ink
+nosignal
+no_signal
+3y1.xyz
+iptv.catvod.com
+backup
+applive
+http://107.150.60.122/live/cctv5p.m3u8
+http://198.204.228.26/live/cctv5p.m3u8
+testvideo

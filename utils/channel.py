@@ -19,6 +19,7 @@ from utils.ffmpeg import check_ffmpeg_installed_status
 from utils.frozen import is_url_frozen, mark_url_bad, mark_url_good
 from utils.i18n import t
 from utils.ip_checker import IPChecker
+from utils.processing_status import status
 from utils.speed import (
     create_speed_test_session,
     get_speed,
@@ -50,9 +51,14 @@ from utils.tools import (
 )
 from utils.types import ChannelData, OriginType, CategoryChannelData, WhitelistMaps
 from utils.whitelist import is_url_whitelisted, get_whitelist_url, get_whitelist_total_count
+from utils.scoring import compute_score
+from utils.authenticity import fps_authenticity, resolution_authenticity, lower_resolution_tier
+from utils.ffmpeg.deep_probe import measure_keep_ratio, measure_upscale_ssim
 
 channel_alias = Alias()
 ip_checker = IPChecker()
+
+logger = get_logger(constants.log_path)
 location_list = config.location
 isp_list = config.isp
 open_supply = config.open_supply
@@ -81,6 +87,9 @@ class _LimitedLogger:
             return
         self.count += 1
         self.logger.info(*args, **kwargs)
+
+    def debug(self, *args, **kwargs):
+        self.logger.debug(*args, **kwargs)
 
 
 def _build_total_urls_signature(info_list: list[ChannelData]) -> str:
@@ -320,11 +329,11 @@ def get_channel_items(whitelist_maps, blacklist) -> CategoryChannelData:
     blacklist_count = len(blacklist)
     channel_logo_count = count_files_by_ext(resource_path(constants.channel_logo_path), [config.logo_type])
     if whitelist_count:
-        print(t("msg.whitelist_found").format(count=whitelist_count))
+        logger.info(t("msg.whitelist_found").format(count=whitelist_count))
     if blacklist_count:
-        print(t("msg.blacklist_found").format(count=blacklist_count))
+        logger.info(t("msg.blacklist_found").format(count=blacklist_count))
     if channel_logo_count:
-        print(t("msg.channel_logo_found").format(count=channel_logo_count))
+        logger.info(t("msg.channel_logo_found").format(count=channel_logo_count))
 
     if os.path.exists(user_source_file):
         with open(user_source_file, "r", encoding="utf-8") as file:
@@ -378,7 +387,7 @@ def get_channel_items(whitelist_maps, blacklist) -> CategoryChannelData:
                         else:
                             unmatched_history[name].extend(info_list)
         except Exception as e:
-            print(t("msg.error_load_cache").format(info=e))
+            logger.warning(t("msg.error_load_cache").format(info=e))
 
         if unmatched_history and config.open_unmatch_category:
             unmatch_category = t("content.unmatch_channel")
@@ -588,7 +597,7 @@ def append_data_to_info_data(
             existing_map[url] = len(channel_list) - 1
 
         except Exception as e:
-            print(t("msg.error_append_channel_data").format(info=e))
+            logger.error(t("msg.error_append_channel_data").format(info=e))
             continue
 
 
@@ -608,7 +617,7 @@ def append_old_data_to_info_data(info_data, cate, name, data, whitelist_maps=Non
             )
         items_len = len(items)
         if items_len > 0:
-            print(f"{label}: {items_len}", end=", ")
+            logger.debug("%s: %s", label, items_len)
 
     whitelist_data = [item for item in data if item["origin"] == "whitelist"]
     append_and_print(whitelist_data, "whitelist", t("name.whitelist"))
@@ -631,12 +640,9 @@ def print_channel_number(data: CategoryChannelData, cate: str, name: str):
     Print channel number
     """
     channel_list = data.get(cate, {}).get(name, [])
-    print("IPv4:", len([channel for channel in channel_list if channel["ipv_type"] == "ipv4"]), end=", ")
-    print("IPv6:", len([channel for channel in channel_list if channel["ipv_type"] == "ipv6"]), end=", ")
-    print(
-        f"{t("name.total")}:",
-        len(channel_list),
-    )
+    ipv4_count = len([channel for channel in channel_list if channel["ipv_type"] == "ipv4"])
+    ipv6_count = len([channel for channel in channel_list if channel["ipv_type"] == "ipv6"])
+    logger.debug("Channel '%s': IPv4: %d, IPv6: %d, %s: %d", name, ipv4_count, ipv6_count, t("name.total"), len(channel_list))
 
 
 def append_total_data(
@@ -683,7 +689,7 @@ def append_total_data(
             continue
 
         for name, old_info_list in channel_obj.items():
-            print(f"{name}:", end=" ")
+            logger.debug("Processing channel: %s", name)
             if old_info_list:
                 append_old_data_to_info_data(data, cate, name, old_info_list, whitelist_maps=whitelist_maps,
                                              blacklist=blacklist,
@@ -696,7 +702,7 @@ def append_total_data(
                         blacklist=blacklist,
                         ipv_type_data=url_hosts_ipv_type
                     )
-                    print(f"{t(f"name.{method}")}:", len(name_results), end=", ")
+                    logger.debug("%s: %d", t(f"name.{method}"), len(name_results))
             print_channel_number(data, cate, name)
 
     if config.open_unmatch_category and subscribe_result:
@@ -750,11 +756,71 @@ def is_valid_speed_result(info) -> bool:
         return False
 
 
+async def _deep_probe_one(item, weights, auth_cfg, sem, logger=None):
+    """Run deep-probe detectors on one result dict and attach authenticity fields."""
+    async with sem:
+        url = item.get("url")
+        if not url:
+            return
+        headers = (config.open_headers and item.get("headers")) or None
+        sample = config.deep_probe_sample_seconds
+        timeout = config.deep_probe_timeout
+        declared_res = item.get("resolution")
+        declared_fps = item.get("fps")
+
+        keep_ratio = await measure_keep_ratio(url, headers, sample, timeout)
+        if keep_ratio is not None and declared_fps:
+            item["effective_fps"] = float(declared_fps) * keep_ratio
+            item["a_fps"] = fps_authenticity(declared_fps, keep_ratio)
+
+        lower = lower_resolution_tier(declared_res)
+        if lower is not None:
+            ssim = await measure_upscale_ssim(url, declared_res, lower, headers, sample, timeout)
+            if ssim is not None:
+                item["a_res"] = resolution_authenticity(
+                    declared_res, ssim, auth_cfg["ssim_low"], auth_cfg["ssim_high"]
+                )
+                item["effective_resolution"] = lower if item["a_res"] < 1.0 else declared_res
+
+        if logger and ("a_res" in item or "a_fps" in item):
+            logger.info(
+                "Deep-probe: %s | res %s -> a_res=%.2f | fps %s -> a_fps=%.2f",
+                url, declared_res, item.get("a_res", 1.0),
+                declared_fps, item.get("a_fps", 1.0),
+            )
+
+
+async def deep_probe_pass(grouped_results, logger=None):
+    """
+    Deep-probe the top-N finalists per channel (by preliminary score) and attach
+    a_res/a_fps/effective_* in place. No-op when disabled.
+    """
+    if not config.open_deep_probe:
+        return
+    warm = config.open_full_probe or (config.open_history and os.path.exists(constants.cache_path))
+    if not warm:
+        return
+    weights = config.ranking_weights
+    auth_cfg = config.authenticity_config
+    top_n = config.deep_probe_top_n
+    sem = asyncio.Semaphore(config.speed_test_limit)
+    tasks = []
+    for cate, names in grouped_results.items():
+        for name, items in names.items():
+            valid = [it for it in items if is_valid_speed_result(it)]
+            valid.sort(key=lambda it: (compute_score(it, weights), it.get("speed") or 0), reverse=True)
+            for it in valid[:top_n]:
+                tasks.append(_deep_probe_one(it, weights, auth_cfg, sem, logger))
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
 async def test_speed(data, ipv6=False, callback=None, on_task_complete=None):
     """
     Test speed of channel data
     """
     ipv6_proxy_url = None if (not config.open_ipv6 or ipv6) else constants.ipv6_proxy
+    open_headers = config.open_headers
     open_full_speed_test = config.open_full_speed_test
     get_resolution = config.open_filter_resolution and check_ffmpeg_installed_status()
     concurrency = max(1, config.speed_test_limit)
@@ -776,9 +842,11 @@ async def test_speed(data, ipv6=False, callback=None, on_task_complete=None):
     urls_limit = config.urls_limit
     valid_count_by_channel = defaultdict(int)
     stopped_channels = set()
+    _status_log_counter = 0
+    _status_log_threshold = max(1, total_tasks // 50)
 
     def handle_result(cate, name, info, result):
-        nonlocal completed
+        nonlocal completed, _status_log_counter
         if cate not in grouped_results:
             grouped_results[cate] = {}
         if name not in grouped_results[cate]:
@@ -817,6 +885,23 @@ async def test_speed(data, ipv6=False, callback=None, on_task_complete=None):
 
         completed += 1
         completed_by_channel[(cate, name)] += 1
+
+        _status_log_counter += 1
+        if _status_log_counter >= _status_log_threshold or completed == 1 or completed == total_tasks:
+            _status_log_counter = 0
+            pct = int((completed / total_tasks) * 100) if total_tasks else 0
+            status.set_phase(
+                "speed_testing",
+                progress=pct,
+                completed_items=completed,
+                total_items=total_tasks,
+                tested_urls=completed,
+            )
+            status.set_current_item(category=cate, name=name, url=merged.get("url", ""))
+            logger.debug(
+                "Speed test: %d/%d (%d%%) — current: %s / %s — %s",
+                completed, total_tasks, pct, cate, name, merged.get("url", ""),
+            )
 
         is_channel_last = reached_limit or completed_by_channel[(cate, name)] >= total_tasks_by_channel.get((cate, name), 0)
         is_last = completed >= total_tasks
@@ -860,7 +945,7 @@ async def test_speed(data, ipv6=False, callback=None, on_task_complete=None):
                     async with asyncio.timeout(config.speed_test_timeout):
                         result = await get_speed(
                             info,
-                            headers=info.get("headers") or None,
+                            headers=(open_headers and info.get("headers")) or None,
                             ipv6_proxy=ipv6_proxy_url,
                             filter_resolution=get_resolution,
                             timeout=config.speed_test_timeout,
@@ -884,6 +969,11 @@ async def test_speed(data, ipv6=False, callback=None, on_task_complete=None):
 
     if skipped and callback:
         callback(skipped)
+
+    try:
+        await deep_probe_pass(grouped_results, logger=logger)
+    except Exception:
+        logger.debug("deep_probe_pass failed", exc_info=True)
 
     close_logger_handlers(speed_log_handler)
     close_logger_handlers(result_log_handler)
@@ -983,14 +1073,28 @@ def generate_channel_statistic(logger, cate, name, values):
     most_video_str = most_video[0][0] if most_video else t('name.unknown')
     most_audio_str = most_audio[0][0] if most_audio else t('name.unknown')
     avg_fps = (sum(fps_values) / len(fps_values)) if fps_values else None
+    fps_str = f"{avg_fps:.2f}" if avg_fps is not None else t('name.unknown')
+    header = f"{t('name.category')}: {cate} | {t('name.name')}: {name}"
     if config.open_full_speed_test:
-        content = f"{f"{t('name.category')}: {cate}, {t('name.name')}: {name}, {t('name.total')}: {total}, {t('name.valid')}: {valid}, {t('name.valid_percent')}: {valid_rate:.2f}%, IPv4: {ipv4_count}, IPv6: {ipv6_count}, {t('name.min_delay')}: {min_delay} ms, {t('name.max_speed')}: {max_speed:.2f} M/s, {t('name.average_speed')}: {avg_speed:.2f} M/s, {t('name.max_resolution')}: {max_resolution}, {t('name.avg_fps')}: {f"{avg_fps:.2f}" if avg_fps is not None else t('name.unknown')}, {t('name.video_codec')}: {most_video_str}, {t('name.audio_codec')}: {most_audio_str}"}"
-        logger.info(content)
-        print(f"📊 {content}")
+        logger.info("%s | %s: %d | %s: %d | %s: %.2f%% | IPv4: %d | IPv6: %d",
+                    header,
+                    t('name.total'), total,
+                    t('name.valid'), valid,
+                    t('name.valid_percent'), valid_rate,
+                    ipv4_count, ipv6_count)
     else:
-        content = f"{f"{t('name.category')}: {cate}, {t('name.name')}: {name}, {t('name.valid')}: {valid}, IPv4: {ipv4_count}, IPv6: {ipv6_count}, {t('name.min_delay')}: {min_delay} ms, {t('name.max_speed')}: {max_speed:.2f} M/s, {t('name.average_speed')}: {avg_speed:.2f} M/s, {t('name.max_resolution')}: {max_resolution}, {t('name.avg_fps')}: {f"{avg_fps:.2f}" if avg_fps is not None else t('name.unknown')}, {t('name.video_codec')}: {most_video_str}, {t('name.audio_codec')}: {most_audio_str}"}"
-        logger.info(content)
-        print(f"📊 {content}")
+        logger.info("%s | %s: %d | IPv4: %d | IPv6: %d",
+                    header,
+                    t('name.valid'), valid,
+                    ipv4_count, ipv6_count)
+    logger.info("  %s: %d ms | %s: %.2f M/s | %s: %.2f M/s | %s: %s | %s: %s | %s: %s | %s: %s",
+                t('name.min_delay'), min_delay,
+                t('name.max_speed'), max_speed,
+                t('name.average_speed'), avg_speed,
+                t('name.max_resolution'), max_resolution,
+                t('name.avg_fps'), fps_str,
+                t('name.video_codec'), most_video_str,
+                t('name.audio_codec'), most_audio_str)
 
 
 _WRITTEN_CONTENT_DIGESTS = {}
@@ -1027,6 +1131,33 @@ def process_write_content(
     rtmp_type = ["hls"] if hls_url else []
     open_url_info = config.open_url_info
     unmatch_category = t("content.unmatch_channel")
+
+    # Inject a real-time progress line at the top of the file while the update
+    # pipeline is still running.  Clients that fetch the result during processing
+    # can see the current phase, percentage and item being tested.
+    if not is_last:
+        try:
+            from utils.processing_status import status as _pstatus
+            _st = _pstatus.get()
+            if _st.get("is_processing"):
+                _phase_label = t(
+                    f"progress.{_st['phase']}",
+                    default=_st["phase"],
+                )
+                _pct = _st.get("progress", 0)
+                _tested = _st.get("tested_urls", 0)
+                _total_urls = _st.get("total_urls", 0)
+                _name = _st.get("current_name", "")
+                _url = _st.get("current_url", "")
+                _parts = [f"⏳{_phase_label} {_pct}%"]
+                if _total_urls:
+                    _parts.append(f"({_tested}/{_total_urls})")
+                if _name:
+                    _parts.append(f"| {_name}")
+                _progress_text = " ".join(_parts)
+                content += f"{_progress_text},{_url or t('msg.waiting_tip')}\n"
+        except Exception:
+            pass
     for cate, channel_obj in data.items():
         content += f"{'\n\n' if not first_cate else ''}{cate},#genre#"
         first_cate = False
@@ -1049,7 +1180,7 @@ def process_write_content(
                 item_url = item["url"]
                 if open_url_info and item["extra_info"]:
                     item_url = add_url_info(item_url, item["extra_info"])
-                total_item_url = f"{hls_url}/{item['id']}.m3u8" if hls_url else item_url
+                total_item_url = f"{hls_url}/{item.get('id', hash(item.get('url', '')))}.m3u8" if hls_url else item_url
                 content += f"\n{name},{total_item_url}"
     if open_empty_category and no_result_name and is_last:
         custom_print(f"\n{t("msg.no_result_channel")}")
@@ -1096,7 +1227,7 @@ def process_write_content(
         update_title = t("content.update_time") if is_last else t("content.update_running")
         if open_url_info and update_time_item["extra_info"]:
             update_time_item_url = add_url_info(update_time_item_url, update_time_item["extra_info"])
-        value = f"{hls_url}/{update_time_item["id"]}.m3u8" if hls_url else update_time_item_url
+        value = f"{hls_url}/{update_time_item.get('id', hash(update_time_item.get('url', '')))}.m3u8" if hls_url else update_time_item_url
         if config.update_time_position == "top":
             content = f"{update_title},#genre#\n{now},{value}\n\n{content}"
         else:
@@ -1118,7 +1249,7 @@ def process_write_content(
             with open(path, "w", encoding="utf-8") as f:
                 f.write(content)
         except Exception as e:
-            print(t("msg.write_error").format(info=e), flush=True)
+            logger.error(t("msg.write_error").format(info=e))
             return
     try:
         convert_to_m3u(path, first_channel_name, data=result_data, content=content)
@@ -1134,7 +1265,7 @@ def write_channel_to_file(data, ipv6=False, first_channel_name=None, skip_print=
     """
     try:
         if not skip_print:
-            print(t("msg.writing_result"), flush=True)
+            logger.info(t("msg.writing_result"))
         open_empty_category = config.open_empty_category
         ipv_type_prefer = list(config.ipv_type_prefer)
         if any(pref == "auto" for pref in ipv_type_prefer):
@@ -1203,6 +1334,6 @@ def write_channel_to_file(data, ipv6=False, first_channel_name=None, skip_print=
             except Exception as e:
                 print(t("msg.write_error").format(info=e), flush=True)
         if not skip_print:
-            print(t("msg.write_success"), flush=True)
+            logger.info(t("msg.write_success"))
     except Exception as e:
-        print(t("msg.write_error").format(info=e), flush=True)
+        logger.error(t("msg.write_error").format(info=e))

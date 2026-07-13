@@ -4,7 +4,6 @@
 # This is the alias list for channel names, used to map multiple names to a single name when fetching from the interface, improving the fetch volume and accuracy.
 # Format: Main name (corresponds to channel name in demo.txt template), alias1, alias2, alias3
 # Aliases support regex matching. Aliases starting with re: are recognized as regular expressions, e\.g\. CCTV-1,re:(?i)^\s*CCTV[-\s_]*0?1(?![0-9Kk+])[\s\S]*$
-
 CCTV-1,re:(?i)^\s*CCTV[-\s_]*0?1(?![0-9Kk+])[\s\S]*$,CCTV1,CCTV-01,CCTV-01_ITV,CCTV-01北联,CCTV-01电信,CCTV-01东联,CCTV-01高码,CCTV-01高清,CCTV-01广西,CCTV-01梅州,CCTV-01咪咕,CCTV-01汝阳,CCTV-01山东,CCTV-01上海,CCTV-01斯特,CCTV-01四川,CCTV-01太原,CCTV-01天津,CCTV-01影视,CCTV-01浙江,CCTV-01重庆,CCTV1综合,CCTV-1综合,CCTV1(B),CCTV1[1920*1080],CCTV1「IPV6」,CCTV1HD,CCTV-1HD,CCTV1-标清,CCTV-1高清,CCTV1-综合,CCTV-1综合ᴴᴰ
 CCTV-2,re:(?i)^\s*CCTV[-\s_]*0?2(?![0-9Kk+])[\s\S]*$,CCTV2,CCTV-02北联,CCTV-02电信,CCTV-02东联,CCTV-02高码,CCTV-02高清,CCTV-02广西,CCTV-02梅州,CCTV-02咪咕,CCTV-02汝阳,CCTV-02山东,CCTV-02上海,CCTV-02斯特,CCTV-02四川,CCTV-02太原,CCTV-02天津,CCTV-02影视,CCTV-02浙江,CCTV-02重庆,CCTV2财经,CCTV-2财经,CCTV2[1280*720],CCTV2「IPV6」,CCTV20241,CCTV22,CCTV250,CCTV2HD,CCTV-2HD,CCTV2-标清,CCTV2-财经,CCTV-2财经ᴴᴰ,CCTV-2高清
 CCTV-3,re:(?i)^\s*CCTV[-\s_]*0?3(?![0-9Kk+])[\s\S]*$,CCTV3,CCTV-03,CCTV-03_ITV,CCTV-03北联,CCTV-03电信,CCTV-03东联,CCTV-03高码,CCTV-03高清,CCTV-03广西,CCTV-03梅州,CCTV-03咪咕,CCTV-03汝阳,CCTV-03山东,CCTV-03上海,CCTV-03斯特,CCTV-03四川,CCTV-03太原,CCTV-03天津,CCTV-03影视,CCTV-03浙江,CCTV-03重庆,CCTV3综艺,CCTV-3综艺,CCTV3[1920*1080],CCTV3「IPV6」,CCTV3HD,CCTV-3HD,CCTV3-标清,CCTV-3高清,CCTV-3-高清,CCTV3-综艺,CCTV-3综艺ᴴᴰ
@@ -27,7 +26,6 @@ CCTV-4美洲,re:(?i)^\s*CCTV[-\s_]*0?4(?![0-9Kk+])[\s\S]*\b(?:美洲|America|Ame
 CCTV-4欧洲,re:(?i)^\s*CCTV[-\s_]*0?4(?![0-9Kk+])[\s\S]*\b(?:欧洲|Europe)\b[\s\S]*$,CCTV4欧洲,CCTV4欧洲咪咕
 CCTV-4K,re:(?i)^\s*CCTV[-\s_]*0?4(?![0-9])\s*(?:[Kk]|Ｋ)\b[\s\S]*$,CCTV4K,cctv4k_10m,CCTV4K超高清,CCTV-4K超高清,CCTV-4k高码,CCTV-4K广西,CCTV-4k浙江
 CCTV-8K,re:(?i)^\s*CCTV[-\s_]*0?8(?![0-9])\s*(?:[Kk]|Ｋ)\b[\s\S]*$,CCTV8K,CCTV8K 超高清,CCTV-8K超高清[3840*2160],cctv8k_120m,cctv8k_36m,CCTV8K超高清,CCTV-8k高码
-
 兵器科技,CCTV兵器,CCTV兵器科技,CCTV-兵器科技,CCTV兵器科技HD
 第一剧场,CCTV第一剧场,CCTV-第一剧场,CCTV第一剧场HD,风云剧场,中国电影,CCTV电影轮播
 发现之旅,CCTV发现之旅,CCTV-发现之旅,中央新影-发现之旅
@@ -43,93 +41,102 @@ CCTV-8K,re:(?i)^\s*CCTV[-\s_]*0?8(?![0-9])\s*(?:[Kk]|Ｋ)\b[\s\S]*$,CCTV8K,CCTV8
 文化精品,CCTV文化精品,CCTV-文化精品,CCTV央视文化精品,CCTV-央视文化精品,CCTV央视文化精品HD
 百姓健康,CCTV卫生健康,CCTV-卫生健康,CCTV卫生与健康
 中学生,CCTV中学甿,CCTV中学生,CCTV-中学生,中央新影-中学甿,中央新影-中学生
-
 CETV-1,CETV1,CETV1中国教育,CETV1 中国教育,中国教育1,中国教育1HD
 CETV-2,CETV2,CETV2中国教育,CETV2 中国教育,中国教育2,中国教育2HD
 CETV-3,CETV3,CETV3中国教育,CETV3 中国教育,中国教育3,中国教育3HD
 CETV-4,CETV4,CETV4中国教育,CETV4 中国教育,中国教育4,中国教育4HD
 CETV早教,CETV早期教育,早期教育
-CGTN英语,CGTN英语新闻
+CGTN,CGTN英语,CGTN英语新闻,cgtn,CGTN News,CCTVNEWS,CGTN英文
 CGTN俄语,CGTN俄罗斯语
-
 广东珠江,GDTV-2,珠江,珠江频道,珠江台,广东珠江高清,珠江高清
-
-翡翠台,TVb翡翠台,tvb翡翠台,TVB翡翠台
-明珠台,TVb明珠台,tvb明珠台,TVB明珠台,TVB Pearl
-北京卫视,北京卫视4K,北京卫视4K超高清
+翡翠台,TVb翡翠台,tvb翡翠台,TVB翡翠台,TVB Jade,TVBJ1,TVB J1,TVB1
+明珠台,TVb明珠台,tvb明珠台,TVB明珠台,TVB Pearl,TVBPearl
+北京卫视,北京卫视4K,北京卫视4K超高清,Beijing TV,BRTV 北京卫视,BTV
 凤凰中文,凤凰卫视中文台
 凤凰香港,凤凰卫视香港台
 福建文体,福建体育
 福建经济,福建经视
-FZTV1,FZTV-1,福州综合,福州1-新闻
-FZTV3,FZTV-3,福州生活,福州3-生活
-
-无线新闻台,無綫新聞台,無線新聞台,无线新闻,TVB无线新闻,TVB无线新闻台
-
+福州综合,FZTV1,FZTV-1,福州1-新闻
+福州生活,FZTV3,FZTV-3,福州3-生活
+无线新闻,无线新闻台,無綫新聞台,無線新聞台,TVB无线新闻,TVB无线新闻台,TVB News,TVBNews
 港台电视 31,港台電視 31,RTHK31,RTHK 31,RTHK-31
 港台电视 32,港台電視 32,RTHK32,RTHK 32,RTHK-32
 中央電視台綜合頻道,中央電視台綜合頻道（CCTV-1綜合),CCTV-1綜合,RTHK33,RTHK 33,RTHK-33
 中國環球電視網紀錄頻道,中國環球電視網紀錄頻道 (CGTN紀錄頻道),CGTN紀錄頻道,RTHK34,RTHK 34,RTHK-34
 CGTN 英語頻道,RTHK35,RTHK 35,RTHK-35
 港台电视 36,港台電視 36,RTHK36,RTHK 36,RTHK-36
-
-*HOY 國際財經台,HOY 國際財經台,*HOY 国际财经台,HOY 国际财经台,HOY国际财经台
-*HOY TV,HOY TV
-*HOY 資訊台,HOY 資訊台,*HOY 资讯台,HOY 资讯台,HOY资讯台
-
+HOY 國際財經台,*HOY 國際財經台,*HOY 国际财经台,HOY 国际财经台,HOY国际财经台
+HOY TV,*HOY TV,HOY78,HOY 77,HOY77
+HOY 資訊台,*HOY 資訊台,*HOY 资讯台,HOY 资讯台,HOY资讯台
 赣州新闻,GZSXW,GZSNews
-
-北京卡酷少儿,卡酷少儿,卡酷少儿高清,卡酷少儿HD,北京卡酷少儿HD,卡酷少儿高码,北京卡酷少儿高码,KAKU,kaku,KaKu,卡酷动画,卡酷动画HD
-
-黑莓电影,NewTV黑莓电影
-黑莓动画,NewTV黑莓动画
-家庭剧场,NewTV家庭剧场
-惊悚悬疑,NewTV惊悚悬疑
+卡酷少儿,北京卡酷少儿,卡酷少儿高清,卡酷少儿HD,北京卡酷少儿HD,卡酷少儿高码,北京卡酷少儿高码,KAKU,kaku,KaKu,卡酷动画,卡酷动画HD
+黑莓电影,NewTV黑莓电影,NEWTV黑莓电影
+黑莓动画,NewTV黑莓动画,NEWTV黑莓动画
+家庭剧场,NewTV家庭剧场,NEWTV家庭剧场
+惊悚悬疑,NewTV惊悚悬疑,NEWTV惊悚悬疑
 超级电影,NewTV超级电影
-动作电影,NewTV动作电影
+动作电影,NewTV动作电影,NEWTV动作电影
 哒啵电竞,NewTV哒啵电竞
-
 游戏风云,SiTV游戏风云
 动漫秀场,SiTV动漫秀场
-游戏风云.SiTV游戏风云
-
 爱动漫,iHOT爱动漫
 新动漫,iHOT新动漫
 爱幼教,iHOT爱幼教
 爱电竞,iHOT爱电竞
-
 电竞天堂,BesTV电竞天堂
 宝宝动画,BesTV宝宝动画
-
 嘉佳卡通,广东嘉佳卡通
-金鹰卡通,湖南金鹰卡通
+金鹰卡通,湖南金鹰卡通,Golden Eagle Cartoon
 哈哈炫动,炫动卡通,上海哈哈炫动
 优漫卡通,江苏优漫卡通
-
-NewTV爱情喜剧,NEWTV爱情喜剧,爱情喜剧
-NewTV超级体育,NEWTV超级体育,超级体育
-NewTV哒啵赛事,NEWTV哒啵赛事,哒啵赛事
-NewTV动作电影,NEWTV动作电影
-NewTV古装剧场,NEWTV古装剧场,古装剧场
-NewTV海外剧场,NEWTV海外剧场,海外剧场
-NewTV黑莓电影,NEWTV黑莓电影,黑莓电影
-NewTV黑莓动画,NEWTV黑莓动画,黑莓动画
-NewTV家庭剧场,NEWTV家庭剧场,家庭剧场
-NewTV金牌综艺,NEWTV金牌综艺,金牌综艺
-NewTV惊悚悬疑,NEWTV惊悚悬疑,惊悚悬疑
-NewTV精品大剧,NEWTV精品大剧,精品大剧
-NewTV精品记录,NEWTV精品记录,精品记录
-NewTV精品纪录,NEWTV精品纪录,精品纪录
-NewTV精品体育,NEWTV精品体育,精品体育
-NewTV军旅剧场,NEWTV军旅剧场,军旅剧场
-NewTV军事纪实,NEWTV军事纪实,魅力潇湘
-NewTV军事评论,NEWTV军事评论,军事评论
-NewTV魅力潇湘,NEWTV魅力潇湘,魅力潇湘
-NewTV明星大片,NEWTV明星大片,明星大片
-NewTV农业致富,NEWTV农业致富,农业致富
-NewTV武搏世界,NEWTV武搏世界,武搏世界,武博世界,武术世界
-NewTV怡伴健康,NEWTV怡伴健康,怡伴健康
-NewTV中国功夫,NEWTV中国功夫,中国功夫
-
-四川卫视,四川卫视4K,四川卫视4K25,四川卫视4K50
-湖南卫视,湖南卫视4K,湖南卫视4K25,湖南卫视4K50
+爱情喜剧,NewTV爱情喜剧,NEWTV爱情喜剧
+超级体育,NewTV超级体育,NEWTV超级体育
+哒啵赛事,NewTV哒啵赛事,NEWTV哒啵赛事
+古装剧场,NewTV古装剧场,NEWTV古装剧场
+海外剧场,NewTV海外剧场,NEWTV海外剧场
+金牌综艺,NewTV金牌综艺,NEWTV金牌综艺
+精品大剧,NewTV精品大剧,NEWTV精品大剧
+精品记录,NewTV精品记录,NEWTV精品记录
+精品纪录,NewTV精品纪录,NEWTV精品纪录
+精品体育,NewTV精品体育,NEWTV精品体育
+军旅剧场,NewTV军旅剧场,NEWTV军旅剧场
+军事纪实,NewTV军事纪实,NEWTV军事纪实,魅力潇湘
+军事评论,NewTV军事评论,NEWTV军事评论
+魅力潇湘,NewTV魅力潇湘,NEWTV魅力潇湘
+明星大片,NewTV明星大片,NEWTV明星大片
+农业致富,NewTV农业致富,NEWTV农业致富
+武术世界,NewTV武搏世界,NEWTV武搏世界,武搏世界,武博世界
+怡伴健康,NewTV怡伴健康,NEWTV怡伴健康
+中国功夫,NewTV中国功夫,NEWTV中国功夫
+四川卫视,四川卫视4K,四川卫视4K25,四川卫视4K50,Sichuan TV
+湖南卫视,湖南卫视4K,湖南卫视4K25,湖南卫视4K50,Hunan TV,Hunan Satellite TV
+浙江卫视,Zhejiang TV,Zhejiang Satellite TV
+江苏卫视,Jiangsu TV,Jiangsu Satellite TV
+东方卫视,Dragon TV,Dongfang TV,Oriental TV
+广东卫视,Guangdong TV,Guangdong Satellite TV
+深圳卫视,Shenzhen TV,Shenzhen Satellite TV
+山东卫视,Shandong TV
+河北卫视,Hebei TV
+河南卫视,Henan TV
+黑龙江卫视,Heilongjiang TV
+辽宁卫视,Liaoning TV
+江西卫视,Jiangxi TV
+安徽卫视,Anhui TV
+天津卫视,Tianjin TV
+贵州卫视,Guizhou TV
+云南卫视,Yunnan TV
+新疆卫视,Xinjiang TV,Xinjiang TV 3
+重庆卫视,Chongqing TV
+湖北卫视,Hubei TV
+TVB星河,TVB Plus,TVBPlus,TVB PLUS
+J2,TVB J2,J2台
+ViuTV,Viutv,VIUTV,ViuTV6,ViuTVsix
+旅游卫视,Travel TV
+厦门卫视,Xiamen TV
+大湾区卫视,GBA Satellite TV,Greater Bay Area TV
+广州综合,Guangzhou TV
+佛山综合,Foshan TV,Foshan News TV
+哈尔滨新闻综合,Harbin Comprehensive News Channel
+哈尔滨影视,Harbin Movie Channel
+CHC动作电影,CHC Action Movies
+CHC家庭影院,CHC Home Theater,CHC Home Cinema

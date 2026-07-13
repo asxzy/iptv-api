@@ -1,13 +1,17 @@
 import asyncio
 import copy
+import logging
 from collections import defaultdict
 from logging import INFO
-from typing import Any, Dict, Optional, Set, Tuple
+from time import time
+from typing import Any, Dict, Optional, Set, Tuple, Callable, cast
 
 import utils.constants as constants
 from utils.channel import sort_channel_result, generate_channel_statistic, write_channel_to_file, retain_origin
 from utils.config import config
 from utils.tools import get_logger, close_logger_handlers
+
+_aggregator_logger = logging.getLogger("aggregator")
 
 
 class ResultAggregator:
@@ -64,6 +68,11 @@ class ResultAggregator:
             try:
                 self._finished_channels.add((cate, name))
                 generate_channel_statistic(self.stat_logger, cate, name, self.test_results[cate][name])
+                if _aggregator_logger.isEnabledFor(logging.DEBUG):
+                    _aggregator_logger.debug(
+                        "Channel done: %s / %s — %d results", cate, name,
+                        len(self.test_results[cate][name]),
+                    )
             except Exception:
                 pass
 
@@ -118,17 +127,16 @@ class ResultAggregator:
 
                 partial_result[cate][name] = list(test_copy.get(cate, {}).get(name, []))
 
-                if (cate, name) not in finished:
-                    prev_sorted = self.result.get(cate, {}).get(name, [])
-                    seen = {it.get("url") for it in partial_result[cate][name] if
-                            isinstance(it, dict) and it.get("url")}
-                    for item in prev_sorted:
-                        if not isinstance(item, dict):
-                            continue
-                        url = item.get("url")
-                        if url and url not in seen and item.get("origin") not in retain_origin:
-                            partial_result[cate][name].append(item)
-                            seen.add(url)
+                prev_sorted = self.result.get(cate, {}).get(name, [])
+                seen = {it.get("url") for it in partial_result[cate][name] if
+                        isinstance(it, dict) and it.get("url")}
+                for item in prev_sorted:
+                    if not isinstance(item, dict):
+                        continue
+                    url = item.get("url")
+                    if url and url not in seen and item.get("origin") not in retain_origin:
+                        partial_result[cate][name].append(item)
+                        seen.add(url)
             try:
                 if len(affected) == 1:
                     cate_single, name_single = next(iter(affected))
@@ -148,6 +156,25 @@ class ResultAggregator:
             except Exception:
                 new_sorted = defaultdict(lambda: defaultdict(list))
         else:
+            # Force flush: inject cached results from self.result into
+            # test_copy so they participate in re-ranking alongside new
+            # subscribe/template results.  Cache entries are NOT in
+            # test_results (they live in self.result from aggregator init),
+            # so they'd be silently dropped by the overwrite at line 197
+            # without this merge.
+            for cate, names in list(self.result.items()):
+                for name, items in list(names.items()):
+                    existing = test_copy.get(cate, {}).get(name)
+                    if existing is None:
+                        continue
+                    existing_urls = {it.get("url") for it in existing
+                                    if isinstance(it, dict) and it.get("url")}
+                    for item in items:
+                        if (isinstance(item, dict)
+                                and item.get("url")
+                                and item["url"] not in existing_urls):
+                            existing.append(item)
+                            existing_urls.add(item["url"])
             try:
                 new_sorted = sort_channel_result(
                     self.base_data, result=test_copy, filter_host=speed_test_filter_host,
@@ -180,12 +207,20 @@ class ResultAggregator:
             is_last,
         )
 
+        # Push merged result to shared in-memory store for live serving
+        try:
+            from utils.result_store import result_store as _rs
+            _rs.store_data(merged)
+        except Exception:
+            pass
+
         self.result = merged
 
     async def flush_once(self, force: bool = False) -> None:
         """
         Flush the current test results to file once.
         """
+        _flush_start = time()
         async with self._lock:
             if not self._dirty and not force:
                 return
@@ -197,6 +232,10 @@ class ResultAggregator:
                 test_copy = copy.deepcopy(self.test_results)
                 finished_for_flush = set(self._finished_channels)
                 self._finished_channels.clear()
+                _aggregator_logger.debug(
+                    "Flush (force) — %d categories, %d finished channels",
+                    len(test_copy), len(finished_for_flush),
+                )
             else:
                 test_copy = defaultdict(lambda: defaultdict(list))
                 for cate, name in pending:
@@ -207,6 +246,10 @@ class ResultAggregator:
 
                 finished_for_flush = set(self._finished_channels & pending)
                 self._finished_channels.difference_update(finished_for_flush)
+                _aggregator_logger.debug(
+                    "Flush (incremental) — %d pending channels, %d finished",
+                    len(pending), len(finished_for_flush),
+                )
 
             self._dirty = False
             self._dirty_count = 0
@@ -221,7 +264,11 @@ class ResultAggregator:
                 is_last=is_last_for_flush,
             )
         except Exception:
-            pass
+            _aggregator_logger.exception("Flush write failed")
+        else:
+            _elapsed = time() - _flush_start
+            if _elapsed > 1.0:
+                _aggregator_logger.debug("Flush completed in %.2fs", _elapsed)
 
     async def _run_loop(self):
         """

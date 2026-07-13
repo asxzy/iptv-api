@@ -1,0 +1,31 @@
+# HLS 广告过滤关键词文件 — 实时代理专用
+# HLS ad-filter keyword file — used by the real-time /proxy endpoint
+#
+# 使用说明 / Usage:
+#   • 每行一个关键词（区分大小写，子串匹配）
+#     One keyword per line (case-sensitive, substring match against the segment URI)
+#   • 以 # 开头的行为注释，空行忽略
+#     Lines starting with # are comments; blank lines are ignored
+#   • 以 re: 开头的行将被解析为正则表达式
+#     Lines prefixed with re: are compiled as regular expressions
+#   • 若此文件不存在，代理将回退使用 config/blacklist.txt 中的关键词
+#     If this file is absent, the proxy falls back to keywords in config/blacklist.txt
+#
+# 启用方法 / How to activate:
+#   将此文件复制为 proxy_ad_filter.txt，然后取消注释或添加所需的关键词：
+#   Copy this file to proxy_ad_filter.txt, then uncomment or add desired keywords:
+#
+#     cp config/proxy_ad_filter.txt.example config/proxy_ad_filter.txt
+#
+# 示例 / Examples (uncomment to enable):
+# /ad/
+# /advertisement/
+# adbreak
+# re:/(ads?|commercial)/
+# re:\.ad\d+\.ts$
+
+nosignal
+no_signal
+backup
+applive
+testvideo

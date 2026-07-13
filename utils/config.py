@@ -1,4 +1,5 @@
 import configparser
+import logging
 import os
 import re
 import shutil
@@ -269,6 +270,11 @@ class ConfigManager:
         return self.config.get("Settings", "user_agent", fallback="").strip()
 
     @property
+    def log_level(self):
+        level = self.config.get("Settings", "log_level", fallback="INFO").upper()
+        return getattr(logging, level, logging.INFO)
+
+    @property
     def open_epg(self):
         return self.config.getboolean("Settings", "open_epg", fallback=True)
 
@@ -279,6 +285,11 @@ class ConfigManager:
     @property
     def speed_test_limit(self):
         return self.config.getint("Settings", "speed_test_limit", fallback=5)
+
+    @property
+    def ffmpeg_concurrency(self):
+        """Process-wide cap on concurrent ffmpeg/ffprobe subprocesses (bounds native memory)."""
+        return self.config.getint("Settings", "ffmpeg_concurrency", fallback=3)
 
     @property
     def location(self):
@@ -409,12 +420,63 @@ class ConfigManager:
         return mapping
 
     @property
+    def ranking_weights(self):
+        getf = self.config.getfloat
+        return {
+            "w_quality": getf("Settings", "ranking_w_quality", fallback=0.5),
+            "w_loadability": getf("Settings", "ranking_w_loadability", fallback=0.5),
+            "w_res": getf("Settings", "ranking_w_res", fallback=0.5),
+            "w_enc": getf("Settings", "ranking_w_enc", fallback=0.35),
+            "w_fps": getf("Settings", "ranking_w_fps", fallback=0.15),
+            "w_start": getf("Settings", "ranking_w_start", fallback=0.3),
+            "w_margin": getf("Settings", "ranking_w_margin", fallback=0.7),
+            "delay_max": getf("Settings", "ranking_delay_max", fallback=3000.0),
+            "margin_target": getf("Settings", "ranking_margin_target", fallback=2.0),
+            "target_bpp": getf("Settings", "ranking_target_bpp", fallback=0.1),
+            "ref_throughput_mbps": getf("Settings", "ranking_ref_throughput_mbps", fallback=10.0),
+            "bpp_prior_floor": getf("Settings", "ranking_bpp_prior_floor", fallback=0.7),
+            "bpp_prior_knee": getf("Settings", "ranking_bpp_prior_knee", fallback=0.3),
+        }
+
+    @property
+    def open_full_probe(self):
+        return self.config.getboolean("Settings", "open_full_probe", fallback=False)
+
+    @property
+    def authenticity_config(self):
+        getf = self.config.getfloat
+        return {
+            "ssim_low": getf("Settings", "ssim_low", fallback=0.96),
+            "ssim_high": getf("Settings", "ssim_high", fallback=0.985),
+        }
+
+    @property
+    def open_deep_probe(self):
+        return self.config.getboolean("Settings", "open_deep_probe", fallback=True)
+
+    @property
+    def deep_probe_top_n(self):
+        return self.config.getint("Settings", "deep_probe_top_n", fallback=5)
+
+    @property
+    def deep_probe_sample_seconds(self):
+        return self.config.getint("Settings", "deep_probe_sample_seconds", fallback=4)
+
+    @property
+    def deep_probe_timeout(self):
+        return self.config.getint("Settings", "deep_probe_timeout", fallback=15)
+
+    @property
     def open_unmatch_category(self):
         return self.config.getboolean("Settings", "open_unmatch_category", fallback=False)
 
     @property
     def open_auto_disable_source(self):
         return self.config.getboolean("Settings", "open_auto_disable_source", fallback=False)
+
+    @property
+    def open_proxy(self):
+        return self.config.getboolean("Settings", "open_proxy", fallback=True)
 
     def load(self):
         """
@@ -487,7 +549,7 @@ class ConfigManager:
                         if not os.path.exists(dest_file_path):
                             shutil.copy(src_file_path, dest_file_path)
         except Exception as e:
-            print(f"Failed to copy files: {str(e)}")
+            logging.getLogger(__name__).error("Failed to copy files: %s", e)
 
 
 config = ConfigManager()
