@@ -825,7 +825,12 @@ async def test_speed(data, ipv6=False, callback=None, on_task_complete=None):
     get_resolution = config.open_filter_resolution and check_ffmpeg_installed_status()
     concurrency = max(1, config.speed_test_limit)
     http_semaphore = asyncio.Semaphore(concurrency)
-    probe_semaphore = asyncio.Semaphore(1)
+    # ponytail: match ffmpeg_concurrency, not a hardcoded 1. probe_url/ffmpeg_url
+    # already bound native subprocess memory via get_ffmpeg_semaphore(); a tighter
+    # outer gate of 1 only serializes probes, so at high total volume URLs time out
+    # queued for the single slot (15s per-URL timeout) and get frozen — collapsing
+    # per-channel results in full runs vs single-channel tests.
+    probe_semaphore = asyncio.Semaphore(max(1, config.ffmpeg_concurrency))
     speed_log_handler = get_logger(constants.speed_test_log_path, level=INFO, init=True)
     result_log_handler = get_logger(constants.result_log_path, level=INFO, init=True)
     logger = _LimitedLogger(speed_log_handler, 10000)
