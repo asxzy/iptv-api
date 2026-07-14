@@ -4,7 +4,13 @@ import pickle
 import time
 from typing import Dict, Optional, Set
 
-MAX_BACKOFF = 24 * 3600
+# ponytail: 1h ceiling, not 24h. A URL is frozen on delay==-1/speed==0
+# (check_channel_need_frozen), which a transient timeout under heavy all-stations
+# load produces too — not just genuinely-dead sources. With a 24h ceiling those
+# false freezes compound across runs and silently drop good sources from
+# candidates (channel.py get_channel_multicast_result: `if is_url_frozen(...)`),
+# collapsing per-channel results. 1h lets a bad run self-heal by the next scan.
+MAX_BACKOFF = 3600
 BASE_BACKOFF = 60
 
 _frozen: Dict[str, Dict] = {}
