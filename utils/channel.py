@@ -1063,6 +1063,7 @@ def generate_channel_statistic(logger, cate, name, values):
                 t('name.avg_fps'), fps_str,
                 t('name.video_codec'), most_video_str,
                 t('name.audio_codec'), most_audio_str)
+    return total, valid
 
 
 def process_write_content(

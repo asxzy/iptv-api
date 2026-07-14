@@ -47,6 +47,8 @@ class ResultAggregator:
         self.ipv6_support = ipv6_support
         self.stat_logger = stat_logger or get_logger(constants.statistic_log_path, level=INFO, init=True)
         self.is_last = False
+        # (cate, name) -> (total, valid), for the end-of-run summary in stop()
+        self._channel_stats: Dict[Tuple[str, str], Tuple[int, int]] = {}
         self._lock = asyncio.Lock()
         self._min_items_before_flush = min_items_before_flush
         self.flush_debounce = flush_debounce if flush_debounce is not None else max(0.2, write_interval / 2)
@@ -88,7 +90,9 @@ class ResultAggregator:
         if is_channel_last:
             try:
                 self._finished_channels.add((cate, name))
-                generate_channel_statistic(self.stat_logger, cate, name, self.test_results[cate][name])
+                stat = generate_channel_statistic(self.stat_logger, cate, name, self.test_results[cate][name])
+                if stat:
+                    self._channel_stats[(cate, name)] = stat
                 if _aggregator_logger.isEnabledFor(logging.DEBUG):
                     _aggregator_logger.debug(
                         "Channel done: %s / %s — %d results", cate, name,
@@ -342,5 +346,28 @@ class ResultAggregator:
             except asyncio.CancelledError:
                 pass
             self._debounce_task = None
+        try:
+            self._log_run_summary()
+        except Exception:
+            pass
         if self.stat_logger:
             close_logger_handlers(self.stat_logger)
+
+    def _log_run_summary(self) -> None:
+        """
+        Emit a compact per-channel valid/total summary to the main run log so
+        results are visible without grepping statistic.log. Channels with the
+        fewest valid sources are listed first, so problem channels (valid 0)
+        surface at the top.
+        """
+        if not self._channel_stats:
+            return
+        run_logger = get_logger(constants.log_path)
+        rows = sorted(self._channel_stats.items(), key=lambda kv: (kv[1][1], -kv[1][0]))
+        lines = [f"  {name}: valid {valid}/{total}" for (_, name), (total, valid) in rows]
+        total_valid = sum(v for _, (_, v) in rows)
+        zero = sum(1 for _, (_, v) in rows if v == 0)
+        run_logger.info(
+            "===== per-channel valid/total (%d channels, %d valid sources, %d empty) =====\n%s",
+            len(rows), total_valid, zero, "\n".join(lines),
+        )
